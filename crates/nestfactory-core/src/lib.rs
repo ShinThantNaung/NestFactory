@@ -28,6 +28,7 @@ pub mod project;
 pub mod scanner;
 pub mod template;
 pub mod testing;
+pub mod wiring;
 pub mod wizard;
 
 pub use model::*;

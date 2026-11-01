@@ -149,6 +149,73 @@ pub fn declare(content: &str, metadata: &str, symbol: &str, import_path: &str) -
     insert_metadata(&with_import, metadata, symbol).unwrap_or(with_import)
 }
 
+fn mentions(text: &str, ident: &str) -> bool {
+    Regex::new(&format!(r"\b{}\b", regex::escape(ident))).is_ok_and(|re| re.is_match(text))
+}
+
+/// The reverse of [`insert_metadata`]: removes the first element of
+/// `@Module({ <metadata>: [...] })` that mentions `key`, so `ScheduleModule` removes
+/// `ScheduleModule.forRoot()` and `ThrottlerGuard` removes `{ provide: APP_GUARD, useClass:
+/// ThrottlerGuard }`. `None` when no element mentions it.
+pub fn remove_metadata(content: &str, metadata: &str, key: &str) -> Option<String> {
+    let p = Parsed::new(content);
+    let open = module_object(&p, "Module")?;
+    let prop = p.object_props(open).into_iter().find(|pr| !pr.spread && pr.key == metadata && pr.value.0 != pr.key_tok)?;
+    let vs = prop.value.0;
+    if !p.is(vs, "[") {
+        return None;
+    }
+    let close = p.matching(vs)?;
+    let items = p.split_items(vs, close);
+    let idx = items.iter().position(|&(s, e)| mentions(p.slice(s, e), key))?;
+    let (s, e) = items[idx];
+    let (from, to) = if items.len() == 1 {
+        (p.toks[vs].end, p.toks[close].start)
+    } else if idx + 1 < items.len() {
+        (p.toks[s].start, p.toks[items[idx + 1].0].start)
+    } else {
+        (p.toks[items[idx - 1].1 - 1].end, p.toks[e - 1].end)
+    };
+    Some(format!("{}{}", &content[..from], &content[to..]))
+}
+
+/// Removes `symbol` from its import when nothing else in the file uses it, dropping the
+/// whole statement when it was the only name.
+pub fn remove_unused_import(content: &str, symbol: &str) -> String {
+    let p = Parsed::new(content);
+    let Some(imp) = p.imports.iter().find(|i| i.names.iter().any(|(_, local)| local == symbol)) else { return content.to_string() };
+    let used_elsewhere = p.toks.iter().any(|t| (t.end <= imp.start || t.start >= imp.end) && &p.src[t.start..t.end] == symbol);
+    if used_elsewhere {
+        return content.to_string();
+    }
+    let rest: Vec<String> = imp.names.iter().filter(|(_, local)| local != symbol).map(|(name, local)| if name == local { name.clone() } else { format!("{name} as {local}") }).collect();
+    if rest.is_empty() && imp.default.is_none() && imp.namespace.is_none() {
+        let mut end = imp.end;
+        if content[end..].starts_with(';') {
+            end += 1;
+        }
+        if content[end..].starts_with("\r\n") {
+            end += 2;
+        } else if content[end..].starts_with('\n') {
+            end += 1;
+        }
+        return format!("{}{}", &content[..imp.start], &content[end..]);
+    }
+    let braces = p.toks.iter().filter(|t| t.start >= imp.start && t.end <= imp.end).map(|t| (t.start, t.end, &p.src[t.start..t.end]));
+    let (mut open, mut close) = (None, None);
+    for (s, e, text) in braces {
+        if text == "{" && open.is_none() {
+            open = Some(e);
+        } else if text == "}" {
+            close = Some(s);
+        }
+    }
+    match (open, close) {
+        (Some(o), Some(c)) => format!("{} {} {}", &content[..o], rest.join(", "), &content[c..]),
+        _ => content.to_string(),
+    }
+}
+
 /// Wraps the given identifiers in the module's `imports` array with `forwardRef(() => X)`.
 pub fn wrap_forward_refs(content: &str, names: &[String]) -> String {
     let p = Parsed::new(content);
@@ -247,6 +314,31 @@ mod tests {
         assert!(second.contains("imports: [UsersModule, OrdersModule],"));
         // No duplicates on a repeat.
         assert_eq!(declare(&second, "imports", "OrdersModule", "./orders/orders.module"), second);
+    }
+
+    #[test]
+    fn removal_reverses_declare() {
+        let wired = declare(APP, "imports", "ScheduleModule.forRoot()", "@nestjs/schedule");
+        // `declare` imports the symbol it inserts; real wiring imports the class name.
+        let wired = wired.replace("import { ScheduleModule.forRoot() }", "import { ScheduleModule }");
+        let out = remove_metadata(&wired, "imports", "ScheduleModule").unwrap();
+        assert!(out.contains("imports: [],"), "{out}");
+        assert_eq!(remove_unused_import(&out, "ScheduleModule"), APP);
+        assert_eq!(remove_metadata(APP, "imports", "ScheduleModule"), None);
+
+        let multi = "import { APP_GUARD } from '@nestjs/core';\nimport { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';\n\n@Module({\n  imports: [\n    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),\n    UsersModule,\n  ],\n  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],\n})\nexport class AppModule {}\n";
+        let a = remove_metadata(multi, "imports", "ThrottlerModule").unwrap();
+        assert!(a.contains("imports: [\n    UsersModule,\n  ],"), "{a}");
+        let b = remove_metadata(&a, "providers", "ThrottlerGuard").unwrap();
+        assert!(b.contains("providers: [AppService],"), "{b}");
+        let c = remove_unused_import(&b, "ThrottlerModule");
+        assert!(c.contains("import { ThrottlerGuard } from '@nestjs/throttler';"), "{c}");
+        let d = remove_unused_import(&remove_unused_import(&c, "ThrottlerGuard"), "APP_GUARD");
+        assert!(!d.contains("@nestjs/throttler") && !d.contains("@nestjs/core"), "{d}");
+        // A name still used elsewhere stays imported.
+        assert_eq!(remove_unused_import(multi, "APP_GUARD"), multi);
+        // `MyThrottlerModule` doesn't match `ThrottlerModule`.
+        assert_eq!(remove_metadata("@Module({ imports: [MyThrottlerModule] })\nexport class A {}\n", "imports", "ThrottlerModule"), None);
     }
 
     #[test]

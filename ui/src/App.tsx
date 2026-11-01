@@ -9,6 +9,7 @@ import { GeneratorView } from './views/Generator';
 import { GraphView, useGraphToast } from './views/Graph';
 import { DatabaseView, EntityDesigner } from './views/Database';
 import { ApiView } from './views/Api';
+import { PackagesView } from './views/Packages';
 import { TestsView } from './views/Tests';
 import { EnvView } from './views/Env';
 import { SettingsView } from './views/Settings';
@@ -35,6 +36,11 @@ function useBackendEvents() {
       on('files-changed', (p: { paths: string[] }) => void reloadFromDisk(p.paths)),
       on('task-done', (p: { id: string; ok: boolean; error: string | null }) => {
         if (p.id === 'install') toast(p.ok ? 'Packages installed' : `Install failed: ${p.error}`, p.ok ? 'success' : 'error');
+        if (p.id === 'packages') {
+          const cmd = useApp.getState().packagesRunning;
+          useApp.setState({ packagesRunning: null });
+          toast(p.ok ? `Done: ${cmd}` : `${p.error}`, p.ok ? 'success' : 'error');
+        }
       }),
       on('debug-state', (p: { state: string; detail: string }) =>
         useApp.setState((s) => ({ debug: { ...s.debug, state: p.state === 'ended' ? 'idle' : p.state, detail: p.detail, frames: p.state === 'paused' ? s.debug.frames : p.state === 'running' ? null : s.debug.frames } })),
@@ -59,6 +65,7 @@ function ProjectBody() {
       {view === 'graph' && <GraphView />}
       {view === 'generate' && <GeneratorView />}
       {view === 'database' && <DatabaseView />}
+      {view === 'packages' && <PackagesView />}
       {view === 'api' && <ApiView />}
       {view === 'tests' && <TestsView />}
       {view === 'env' && <EnvView />}

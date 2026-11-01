@@ -8,4 +8,8 @@ range: string,
 /**
  * The version in node_modules; `None` until the package is installed.
  */
-installed: string | null, dev: boolean, essential: boolean, };
+installed: string | null, dev: boolean, essential: boolean, 
+/**
+ * Source files that import it; filled by [`usages`].
+ */
+usedIn: Array<string>, };

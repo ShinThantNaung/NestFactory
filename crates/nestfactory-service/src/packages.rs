@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nestfactory_core::model::PackageManager;
-use nestfactory_core::pm::{self, InstalledPackage, PackageAction, PackageList, UpdateKind};
+use nestfactory_core::pm::{self, CatalogEntry, InstalledPackage, PackageAction, PackageList, UpdateKind};
+use nestfactory_core::wiring::WireStep;
 use serde::Serialize;
 use serde_json::Value;
 use ts_rs::TS;
@@ -24,6 +25,7 @@ pub struct SearchHit {
     pub keywords: Vec<String>,
     /// When the latest version was published (ISO 8601).
     pub date: Option<String>,
+    #[ts(type = "number | null")]
     pub weekly_downloads: Option<u64>,
     pub homepage: Option<String>,
     pub repository: Option<String>,
@@ -67,6 +69,169 @@ pub struct PackagePlan {
     pub peers: Vec<PlannedPackage>,
     pub command: String,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CheckLevel {
+    Ok,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Check {
+    pub level: CheckLevel,
+    pub text: String,
+}
+
+/// Everything the details panel shows for one package, installed or not.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PackageDetails {
+    pub name: String,
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub homepage: Option<String>,
+    pub repository: Option<String>,
+    pub npm: String,
+    pub latest: Option<String>,
+    /// The newest version that fits the project's Nest (`latest` when that fits).
+    pub recommended: Option<String>,
+    /// Stable versions, newest first (at most 30).
+    pub versions: Vec<String>,
+    pub checks: Vec<Check>,
+    /// `@types/<name>` when the package has no types of its own and DefinitelyTyped has them.
+    pub types_package: Option<String>,
+    /// Required peers of `recommended` the project lacks.
+    pub peers: Vec<PlannedPackage>,
+    pub catalog: Option<CatalogEntry>,
+    pub installed: Option<InstalledPackage>,
+    pub wiring: Vec<WireStep>,
+    /// Set when the registry couldn't be reached; the local fields are still filled in.
+    pub registry_error: Option<String>,
+}
+
+fn manifest(registry: &str, name: &str, version: &str) -> Option<Value> {
+    agent().get(&format!("{registry}/{}/{version}", encode(name))).call().ok()?.into_json().ok()
+}
+
+fn repository_url(m: &Value) -> Option<String> {
+    let raw = m.get("repository").and_then(|r| r.as_str().map(String::from).or_else(|| r.get("url").and_then(Value::as_str).map(String::from)))?;
+    let url = raw.trim_start_matches("git+").trim_end_matches(".git").replace("git://", "https://").replace("ssh://git@", "https://");
+    if let Some(slug) = url.strip_prefix("github:") {
+        return Some(format!("https://github.com/{slug}"));
+    }
+    url.starts_with("http").then_some(url)
+}
+
+fn has_own_types(m: &Value) -> bool {
+    m.get("types").is_some() || m.get("typings").is_some() || m.get("exports").is_some_and(|e| e.to_string().contains("\"types\""))
+}
+
+/// `@types/<name>`, with scoped names flattened the DefinitelyTyped way (`@a/b` → `@types/a__b`).
+fn types_name(name: &str) -> String {
+    format!("@types/{}", name.trim_start_matches('@').replace('/', "__"))
+}
+
+pub fn details(registry: &str, list: &PackageList, name: &str, wiring: Vec<WireStep>) -> PackageDetails {
+    let nest = list.nest_version.as_deref().and_then(|v| v.parse::<u64>().ok());
+    let installed = list.packages.iter().find(|p| p.name == name).cloned();
+    let mut d = PackageDetails {
+        name: name.into(),
+        description: None,
+        license: None,
+        homepage: None,
+        repository: None,
+        npm: format!("https://www.npmjs.com/package/{name}"),
+        latest: None,
+        recommended: None,
+        versions: vec![],
+        checks: vec![],
+        types_package: None,
+        peers: vec![],
+        catalog: pm::catalog_lookup(name, installed.is_some()),
+        installed,
+        wiring,
+        registry_error: None,
+    };
+    let doc = match packument(registry, name) {
+        Ok(doc) => doc,
+        Err(e) => {
+            d.description = d.catalog.as_ref().map(|c| c.description.clone());
+            d.registry_error = Some(format!("{e:#}"));
+            return d;
+        }
+    };
+    d.latest = doc.get("dist-tags").and_then(|t| t.get("latest")).and_then(Value::as_str).map(String::from);
+    let mut versions: Vec<(u64, u64, u64, &str)> = doc
+        .get("versions")
+        .and_then(Value::as_object)
+        .map(|vs| vs.keys().filter_map(|v| pm::parse_version(v).map(|(a, b, c)| (a, b, c, v.as_str()))).collect())
+        .unwrap_or_default();
+    versions.sort_unstable_by(|a, b| b.cmp(a));
+    d.versions = versions.iter().take(30).map(|v| v.3.to_string()).collect();
+    d.recommended = match nest {
+        Some(m) => pm::newest_for_nest(&doc, name, m),
+        None => d.latest.clone(),
+    };
+    let short = doc.get("versions").and_then(|vs| vs.get(d.recommended.as_deref().or(d.latest.as_deref()).unwrap_or_default())).cloned().unwrap_or(Value::Null);
+
+    // The full manifest has what the abbreviated one leaves out: description, licence, types.
+    let pick = d.recommended.clone().or_else(|| d.latest.clone()).unwrap_or_else(|| "latest".into());
+    let want_types = !name.starts_with("@types/");
+    let (full, types_latest) = std::thread::scope(|s| {
+        let full = s.spawn(|| manifest(registry, name, &pick));
+        let types = s.spawn(|| if want_types { latest(registry, &types_name(name)) } else { None });
+        (full.join().ok().flatten(), types.join().ok().flatten())
+    });
+    let full = full.unwrap_or(Value::Null);
+    let s = |k: &str| full.get(k).and_then(Value::as_str).map(String::from);
+    // @nestjs packages all describe themselves as "Nest - modern, fast…"; the catalog says more.
+    d.description = d.catalog.as_ref().map(|c| c.description.clone()).or_else(|| s("description"));
+    d.license = s("license");
+    d.homepage = s("homepage");
+    d.repository = repository_url(&full);
+
+    let has = |n: &str| list.packages.iter().any(|p| p.name == n) || d.catalog.as_ref().is_some_and(|c| c.companions.iter().chain(&c.dev_companions).any(|x| x == n));
+    for peer in pm::missing_peers(&short, &has) {
+        let spec = match nest {
+            Some(m) if pm::CORE_FAMILY.contains(&peer.as_str()) => format!("{peer}@^{m}"),
+            _ => peer.clone(),
+        };
+        d.peers.push(PlannedPackage { note: Some(format!("Peer of {name}")), name: peer, spec });
+    }
+
+    let nest_peer = pm::CORE_FAMILY.contains(&name) || ["@nestjs/common", "@nestjs/core"].iter().any(|p| short.get("peerDependencies").and_then(|ps| ps.get(*p)).is_some());
+    if let (Some(m), true) = (nest, nest_peer) {
+        d.checks.push(match (&d.recommended, &d.latest) {
+            (None, _) => Check { level: CheckLevel::Error, text: format!("No release lists Nest {m} as supported; expect peer dependency errors") },
+            (Some(r), Some(l)) if r != l => Check { level: CheckLevel::Warn, text: format!("{l} needs a newer Nest; {r} is the newest release for Nest {m}") },
+            _ if pm::CORE_FAMILY.contains(&name) => Check { level: CheckLevel::Ok, text: format!("Same major as the project's @nestjs/core {m}") },
+            _ => Check { level: CheckLevel::Ok, text: format!("Peer deps match @nestjs/common and core {m}") },
+        });
+    }
+    if want_types && !full.is_null() {
+        d.checks.push(if has_own_types(&full) {
+            Check { level: CheckLevel::Ok, text: "Ships its own TypeScript types".into() }
+        } else if types_latest.is_some() {
+            d.types_package = Some(types_name(name));
+            Check { level: CheckLevel::Warn, text: format!("Types come from {}, added as a dev dependency", types_name(name)) }
+        } else {
+            Check { level: CheckLevel::Warn, text: "No TypeScript types published; imports are typed as any".into() }
+        });
+    }
+    if short.get("hasInstallScript").and_then(Value::as_bool) == Some(true) {
+        d.checks.push(Check { level: CheckLevel::Warn, text: "Runs an install script (native build); some machines need build tools".into() });
+    }
+    if let Some(msg) = short.get("deprecated").and_then(Value::as_str) {
+        d.checks.push(Check { level: CheckLevel::Error, text: format!("Deprecated: {msg}") });
+    }
+    d
 }
 
 pub fn registry_url(root: &Path) -> String {
@@ -261,5 +426,14 @@ pub fn command_for(pmgr: PackageManager, action: PackageAction, specs: &[String]
         PackageAction::Add => pm::add(pmgr, specs, dev),
         PackageAction::Remove => pm::remove(pmgr, specs),
         PackageAction::Install => pm::install(pmgr),
+    }
+}
+
+/// The commands for one run: `specs` with `dev`, then `dev_specs` as dev dependencies (adds only).
+pub fn commands_for(pmgr: PackageManager, action: PackageAction, specs: &[String], dev: bool, dev_specs: &[String]) -> Vec<Vec<String>> {
+    match action {
+        PackageAction::Add => [(specs, dev), (dev_specs, true)].into_iter().filter(|(s, _)| !s.is_empty()).map(|(s, d)| pm::add(pmgr, s, d)).collect(),
+        PackageAction::Remove => vec![pm::remove(pmgr, &[specs, dev_specs].concat())],
+        PackageAction::Install => vec![pm::install(pmgr)],
     }
 }

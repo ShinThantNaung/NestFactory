@@ -28,6 +28,7 @@ use nestfactory_core::pm::PackageAction;
 use nestfactory_core::project::read_meta;
 use nestfactory_core::testing::{self, Problem, TestRun};
 use nestfactory_core::wizard::{self, PlannedFile, WizardOptions, WizardStep};
+use nestfactory_core::wiring;
 use nestfactory_core::{pm, Scanner};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
@@ -423,7 +424,33 @@ impl Backend {
             "typecheck" => val(self.typecheck()?),
 
             // ---- packages -----------------------------------------------------------------------
-            "pkgList" => val(pm::list(&self.root()?)),
+            "pkgList" => val(self.package_list()?),
+            "pkgDetails" => {
+                let name: String = arg(a, "name")?;
+                let root = self.root()?;
+                let wiring = wiring::steps(&root, &*self.model()?, &name);
+                val(packages::details(&packages::registry_url(&root), &self.package_list()?, &name, wiring))
+            }
+            "pkgCommand" => {
+                let action: PackageAction = arg(a, "action")?;
+                let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
+                let dev: bool = opt_arg(a, "dev").unwrap_or(false);
+                let dev_specs: Vec<String> = opt_arg(a, "devPackages").unwrap_or_default();
+                val(packages::commands_for(self.package_manager(), action, &specs, dev, &dev_specs).iter().map(|c| pm::display(c)).collect::<Vec<_>>())
+            }
+            "pkgWire" => {
+                let name: String = arg(a, "name")?;
+                let steps: Vec<String> = arg(a, "steps")?;
+                let cs = wiring::wire(&self.root()?, &*self.model()?, &name, &steps)?;
+                self.remember(cs)
+            }
+            "pkgUnwire" => {
+                let name: String = arg(a, "name")?;
+                match wiring::unwire(&self.root()?, &*self.model()?, &name) {
+                    Some(cs) => self.remember(cs),
+                    None => Ok(Value::Null),
+                }
+            }
             "pkgLatest" => {
                 let root = self.root()?;
                 val(packages::latest_versions(&packages::registry_url(&root), &pm::list(&root)))
@@ -448,7 +475,8 @@ impl Backend {
                 let action: PackageAction = arg(a, "action")?;
                 let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
                 let dev: bool = opt_arg(a, "dev").unwrap_or(false);
-                val(self.run_packages(action, specs, dev)?)
+                let dev_specs: Vec<String> = opt_arg(a, "devPackages").unwrap_or_default();
+                val(self.run_packages(action, specs, dev, dev_specs)?)
             }
 
             // ---- env -------------------------------------------------------------------------------
@@ -711,28 +739,47 @@ impl Backend {
         });
     }
 
-    /// Runs one add, remove or install in the background as process `packages`, then emits
-    /// `task-done` and a rescan. Returns the command line.
-    fn run_packages(&self, action: PackageAction, specs: Vec<String>, dev: bool) -> Result<String> {
-        if action != PackageAction::Install && specs.is_empty() {
+    /// The project's packages with the source files that import each one.
+    fn package_list(&self) -> Result<pm::PackageList> {
+        let root = self.root()?;
+        let mut list = pm::list(&root);
+        let files: Vec<String> = self.model()?.files.iter().map(|f| f.path.clone()).collect();
+        let mut usages = pm::usages(&root, &files);
+        for p in &mut list.packages {
+            p.used_in = usages.remove(&p.name).unwrap_or_default();
+        }
+        Ok(list)
+    }
+
+    /// Runs one add (`specs`, then `dev_specs` as dev dependencies), remove or install in the
+    /// background as process `packages`, then emits `task-done` and a rescan. Returns the
+    /// command lines.
+    fn run_packages(&self, action: PackageAction, specs: Vec<String>, dev: bool, dev_specs: Vec<String>) -> Result<Vec<String>> {
+        if action != PackageAction::Install && specs.is_empty() && dev_specs.is_empty() {
             bail!("No packages given");
         }
-        if let Some(bad) = specs.iter().find(|s| s.starts_with('-') || s.trim().is_empty()) {
+        if let Some(bad) = specs.iter().chain(&dev_specs).find(|s| s.starts_with('-') || s.trim().is_empty()) {
             bail!("Not a package name: {bad}");
         }
         let root = self.root()?;
-        let cmdline = packages::command_for(self.package_manager(), action, &specs, dev);
-        let shown = pm::display(&cmdline);
+        let cmds = packages::commands_for(self.package_manager(), action, &specs, dev, &dev_specs);
+        let shown: Vec<String> = cmds.iter().map(|c| pm::display(c)).collect();
         if self.inner.procs.is_running("install") || self.inner.packages_busy.swap(true, Ordering::SeqCst) {
             bail!("Another install is still running");
         }
         let me = self.clone();
-        let line = shown.clone();
         std::thread::spawn(move || {
-            me.emit("process-output", json!({ "id": "packages", "stream": "stdout", "text": format!("$ {line}") }));
-            let res = command(&cmdline[0], &cmdline[1..], &root, &[("FORCE_COLOR".into(), "1".into())])
-                .and_then(|c| me.inner.procs.run("packages", c))
-                .and_then(|(code, out)| if code == 0 { Ok(()) } else { Err(anyhow!("{line} failed:\n{}", tail(&out, 15))) });
+            let mut res = Ok(());
+            for cmdline in cmds {
+                let line = pm::display(&cmdline);
+                me.emit("process-output", json!({ "id": "packages", "stream": "stdout", "text": format!("$ {line}") }));
+                res = command(&cmdline[0], &cmdline[1..], &root, &[("FORCE_COLOR".into(), "1".into())])
+                    .and_then(|c| me.inner.procs.run("packages", c))
+                    .and_then(|(code, out)| if code == 0 { Ok(()) } else { Err(anyhow!("{line} failed:\n{}", tail(&out, 15))) });
+                if res.is_err() {
+                    break;
+                }
+            }
             me.inner.packages_busy.store(false, Ordering::SeqCst);
             me.emit("task-done", json!({ "id": "packages", "ok": res.is_ok(), "error": res.err().map(|e| format!("{e:#}")) }));
             me.rescan_and_emit(vec!["package.json".into()]);

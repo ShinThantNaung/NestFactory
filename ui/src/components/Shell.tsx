@@ -69,6 +69,7 @@ export function commands(): Command[] {
     ['explorer', 'Explorer'],
     ['graph', 'Module graph'],
     ['database', 'Database connections'],
+    ['packages', 'Packages'],
     ['api', 'API explorer'],
     ['tests', 'Tests'],
     ['env', 'Environment'],
@@ -273,6 +274,7 @@ export function ToolRail() {
     ['graph', 'graph', 'Module graph'],
     ['generate', 'generate', 'Generate'],
     ['database', 'database', 'Database'],
+    ['packages', 'package', 'Packages'],
     ['api', 'api', 'API explorer'],
     ['tests', 'tests', 'Tests'],
     ['env', 'env', 'Environment'],
@@ -302,6 +304,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const debug = useApp((s) => s.debug);
   const problems = useApp((s) => s.problems.length);
   const view = useApp((s) => s.view);
+  const lastPkg = useApp((s) => s.lastPackageCommand);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -320,6 +323,11 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
       )}
       {model.gitBranch && <span>{model.gitBranch}</span>}
       {view === 'generate' && <span>Nest CLI schematics · @nestjs/schematics</span>}
+      {lastPkg && (
+        <button className="mono" title={lastPkg} style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => setView('packages')}>
+          Last: {lastPkg}
+        </button>
+      )}
       {dbLabel && (
         <button onClick={() => setView('database')}>
           <span className="dot ok" />

@@ -9,8 +9,10 @@ import type { Changeset } from './bindings/Changeset';
 import type { Schematic } from './bindings/Schematic';
 import type { Breakpoint } from './bindings/Breakpoint';
 import type { ApiRequest } from './bindings/ApiRequest';
+import type { LatestVersion } from './bindings/LatestVersion';
+import type { PackageAction } from './bindings/PackageAction';
 
-export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'api' | 'tests' | 'env' | 'settings';
+export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'packages' | 'api' | 'tests' | 'env' | 'settings';
 export type PanelTab = 'run' | 'problems' | 'tests' | 'terminal';
 
 export interface LogLine {
@@ -80,6 +82,11 @@ interface State {
   palette: 'commands' | 'files' | null;
   entityDesigner: { directory?: string; module?: string } | null;
   busy: string | null;
+  /** The package command running now (Packages view), and the last one that ran. */
+  packagesRunning: string | null;
+  lastPackageCommand: string | null;
+  /** Latest versions from the registry, kept while the project is open. */
+  latestVersions: LatestVersion[] | null;
 }
 
 export const useApp = create<State>(() => ({
@@ -111,6 +118,9 @@ export const useApp = create<State>(() => ({
   palette: null,
   entityDesigner: null,
   busy: null,
+  packagesRunning: null,
+  lastPackageCommand: null,
+  latestVersions: null,
 }));
 
 const set = useApp.setState;
@@ -141,7 +151,7 @@ export async function openProject(path: string) {
   try {
     const model = await api.openProject(path);
     const settings = await api.getSettings();
-    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root) });
+    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root), latestVersions: null, lastPackageCommand: null });
     const main = model.files.find((f) => f.kind === 'main');
     const firstController = model.classes.find((c) => c.kind === 'controller');
     if (firstController) openFile(firstController.file, firstController.line);
@@ -315,6 +325,19 @@ export async function startDebug(mode: 'app' | 'test', file: string | null = nul
 export async function stopDebug() {
   await guard(api.debugStop());
   set({ debug: { state: 'idle', detail: '', frames: null, mode: null } });
+}
+
+/** Starts a package command; output streams as process `packages`, and `task-done` ends it. */
+export async function runPackages(action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) {
+  clearLog('packages');
+  try {
+    const lines = await api.pkgRun(action, packages, dev, devPackages);
+    set({ packagesRunning: lines.join(' && '), lastPackageCommand: lines.join(' && ') });
+    return true;
+  } catch (e) {
+    toast(errorText(e), 'error');
+    return false;
+  }
 }
 
 export function setView(view: View) {

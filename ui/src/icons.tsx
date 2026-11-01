@@ -30,6 +30,12 @@ const paths: Record<string, ReactNode> = {
       <path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3" />
     </>
   ),
+  package: (
+    <>
+      <path d="M3 8l9-5 9 5v8l-9 5-9-5z" />
+      <path d="M3 8l9 5 9-5M12 13v8M7.5 5.5l9 5" />
+    </>
+  ),
   api: <path d="M3 12h4l3-7 4 14 3-7h4" />,
   tests: <path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3" />,
   env: (

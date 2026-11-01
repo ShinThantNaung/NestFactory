@@ -34,6 +34,7 @@ import type { SearchHit } from './bindings/SearchHit';
 import type { CatalogEntry } from './bindings/CatalogEntry';
 import type { PackageAction } from './bindings/PackageAction';
 import type { PackagePlan } from './bindings/PackagePlan';
+import type { PackageDetails } from './bindings/PackageDetails';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -196,9 +197,17 @@ export const api = {
   pkgCatalog: () => call<CatalogEntry[]>('pkgCatalog'),
   /** Resolves versions for the project's Nest and finds missing peers; writes nothing. */
   pkgPlan: (action: PackageAction, packages: string[], dev = false) => call<PackagePlan>('pkgPlan', { action, packages, dev }),
-  /** Starts the command in the background and returns it. Output streams as process `packages`;
+  /** Registry details, compatibility checks and wiring steps for one package. */
+  pkgDetails: (name: string) => call<PackageDetails>('pkgDetails', { name }),
+  /** The command lines a run would use; no network. */
+  pkgCommand: (action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) => call<string[]>('pkgCommand', { action, packages, dev, devPackages }),
+  /** Starts the commands in the background and returns them. Output streams as process `packages`;
    * `task-done` with id `packages` follows, then `project-updated`. */
-  pkgRun: (action: PackageAction, packages: string[], dev = false) => call<string>('pkgRun', { action, packages, dev }),
+  pkgRun: (action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) => call<string[]>('pkgRun', { action, packages, dev, devPackages }),
+  /** A changeset wiring the package into the root module (steps: `module`, `example`). */
+  pkgWire: (name: string, steps: string[]) => call<Changeset>('pkgWire', { name, steps }),
+  /** A changeset taking the package's wiring out, or null when there is none. */
+  pkgUnwire: (name: string) => call<Changeset | null>('pkgUnwire', { name }),
 
   envReport: () => call<EnvReport>('envReport'),
   envSave: (file: string, updates: [string, string | null][]) => call<EnvReport>('envSave', { file, updates }),

@@ -6,4 +6,8 @@ export type PackageList = { packageManager: PackageManager, nestVersion: string 
 /**
  * Something in package.json isn't in node_modules yet.
  */
-needsInstall: boolean, };
+needsInstall: boolean, 
+/**
+ * The lockfile the package manager was picked from, if any.
+ */
+lockfile: string | null, };
