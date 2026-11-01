@@ -1,0 +1,20 @@
+# Rust
+/target/
+
+# Node / UI
+node_modules/
+/dist/
+*.log
+
+# Tauri
+/src-tauri/gen/schemas/
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local dev bridge token
+.bridge-token

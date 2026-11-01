@@ -1,0 +1,20 @@
+[package]
+name = "nestfactory-core"
+description = "Nest-aware analysis and code generation for NestFactory: scanner, decorator parser, module graph, generators."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+regex.workspace = true
+ts-rs.workspace = true
+similar = "2"
+ignore = "0.4"
+rayon = "1"
+include_dir = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
