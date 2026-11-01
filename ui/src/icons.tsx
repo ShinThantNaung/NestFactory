@@ -1,5 +1,6 @@
 // Stroke icons drawn for NestFactory, matching the design artboards.
 import type { ReactNode } from 'react';
+import logoUrl from './assets/logo.png';
 
 const paths: Record<string, ReactNode> = {
   file: (
@@ -179,10 +180,5 @@ export function StopSquare({ size = 12 }: { size?: number }) {
 }
 
 export function Logo({ size = 20 }: { size?: number }) {
-  return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-      <path d="M12 2l9 5v10l-9 5-9-5V7z" fill="var(--ember)" />
-      <path d="M8 10l4-2 4 2v4l-4 2-4-2z" fill="var(--bg-base)" />
-    </svg>
-  );
+  return <img src={logoUrl} width={size} height={size} alt="" aria-hidden="true" draggable={false} style={{ display: 'block', flex: 'none' }} />;
 }

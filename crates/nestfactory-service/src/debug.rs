@@ -84,11 +84,14 @@ impl Session {
     ) -> Result<Session> {
         let port = if mode == "test" { 9230 } else { 9229 };
         let cmd = if mode == "test" {
-            let jest = root.join("node_modules/jest/bin/jest.js");
-            if !jest.exists() {
-                return Err(anyhow!("Jest isn't installed in this project"));
-            }
-            let mut args = vec![format!("--inspect-brk=127.0.0.1:{port}"), jest.to_string_lossy().to_string(), "--runInBand".to_string(), "--no-coverage".to_string()];
+            let runner = crate::test_runner(&root).ok_or_else(|| anyhow!("Neither Jest nor Vitest is installed in this project"))?;
+            let bin = runner.bin.to_string_lossy().to_string();
+            let mut args = if runner.vitest {
+                // Vitest opens the inspector in its test worker.
+                vec![bin, "run".to_string(), format!("--inspect-brk=127.0.0.1:{port}"), "--no-file-parallelism".to_string()]
+            } else {
+                vec![format!("--inspect-brk=127.0.0.1:{port}"), bin, "--runInBand".to_string(), "--no-coverage".to_string()]
+            };
             if let Some(f) = &file {
                 args.push(f.clone());
             }

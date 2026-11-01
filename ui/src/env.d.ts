@@ -10,5 +10,9 @@ declare module 'monaco-editor/languages/definitions/typescript/typescript' {
 }
 
 declare module '*.css';
+declare module '*.png' {
+  const url: string;
+  export default url;
+}
 declare module '@fontsource-variable/geist';
 declare module '@fontsource-variable/geist-mono';

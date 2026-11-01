@@ -1331,9 +1331,25 @@ legend {
   justify-content: center;
 }
 
+.gen-form {
+  flex: 1 1 340px;
+  max-width: 380px;
+  padding: 22px 20px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow: auto;
+}
+
+.gen-form .input {
+  background: var(--bg-editor);
+}
+
 .change-list {
   flex: 1 1 240px;
-  max-width: 290px;
+  max-width: 270px;
   border-right: 1px solid var(--border-subtle);
   padding: 18px 10px;
   display: flex;

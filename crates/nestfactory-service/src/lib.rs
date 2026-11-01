@@ -886,26 +886,39 @@ impl Backend {
 
     fn run_tests(&self, e2e: bool, file: Option<String>, name: Option<String>, coverage: bool) -> Result<TestRun> {
         let root = self.root()?;
-        let jest = root.join("node_modules/jest/bin/jest.js");
-        if !jest.exists() {
-            bail!("Jest isn't installed in this project (node_modules/jest). Run an install first.");
-        }
-        let tmp = std::env::temp_dir().join(format!("nestfactory-jest-{}", store::project_key(&root)));
+        let runner = test_runner(&root).ok_or_else(|| anyhow!("Neither Jest nor Vitest is installed in this project. Run an install first."))?;
+        let tmp = std::env::temp_dir().join(format!("nestfactory-tests-{}", store::project_key(&root)));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp)?;
         let results = tmp.join("results.json");
-        let mut args = vec![
-            jest.to_string_lossy().to_string(),
-            "--json".into(),
-            format!("--outputFile={}", results.display()),
-            "--testLocationInResults".into(),
-        ];
+        let coverage_dir = tmp.join("coverage");
         let cov = coverage && !e2e && file.is_none();
-        if cov {
-            args.extend(["--coverage".into(), "--coverageReporters=json".into(), format!("--coverageDirectory={}", tmp.join("coverage").display())]);
-        }
-        if e2e {
-            args.extend(["--config".into(), "./test/jest-e2e.json".into()]);
+        let mut args = vec![runner.bin.to_string_lossy().to_string()];
+        if runner.vitest {
+            // Vitest's JSON reporter writes Jest-compatible results.
+            args.extend([
+                "run".into(),
+                "--reporter=default".into(),
+                "--reporter=json".into(),
+                format!("--outputFile.json={}", results.display()),
+                "--includeTaskLocation".into(),
+            ]);
+            let has_cov = root.join("node_modules/@vitest/coverage-v8").exists() || root.join("node_modules/@vitest/coverage-istanbul").exists();
+            if cov && has_cov {
+                args.extend(["--coverage.enabled=true".into(), "--coverage.reporter=json".into(), format!("--coverage.reportsDirectory={}", coverage_dir.display())]);
+            }
+            if e2e {
+                let cfg = if root.join("vitest.config.e2e.ts").exists() { "./vitest.config.e2e.ts" } else { "./test/vitest-e2e.config.ts" };
+                args.extend(["--config".into(), cfg.into()]);
+            }
+        } else {
+            args.extend(["--json".into(), format!("--outputFile={}", results.display()), "--testLocationInResults".into()]);
+            if cov {
+                args.extend(["--coverage".into(), "--coverageReporters=json".into(), format!("--coverageDirectory={}", coverage_dir.display())]);
+            }
+            if e2e {
+                args.extend(["--config".into(), "./test/jest-e2e.json".into()]);
+            }
         }
         if let Some(f) = &file {
             args.push(f.clone());
@@ -922,7 +935,7 @@ impl Backend {
             run.error = Some(tail(&testing::strip_ansi(&out), 20));
         }
         if cov {
-            if let Ok(c) = std::fs::read_to_string(tmp.join("coverage/coverage-final.json")) {
+            if let Ok(c) = std::fs::read_to_string(coverage_dir.join("coverage-final.json")) {
                 run.coverage = testing::parse_coverage(&root_s, &c);
             }
         }
@@ -1011,6 +1024,28 @@ impl Backend {
         }
         Ok(project.to_string_lossy().to_string())
     }
+}
+
+pub struct TestRunner {
+    pub vitest: bool,
+    pub bin: PathBuf,
+}
+
+/// The project's test runner: Vitest when its test script uses it (Nest 12 default),
+/// otherwise Jest (Nest 11 and earlier).
+pub fn test_runner(root: &Path) -> Option<TestRunner> {
+    let jest = root.join("node_modules/jest/bin/jest.js");
+    let vitest = root.join("node_modules/vitest/vitest.mjs");
+    let script = nestfactory_core::project::read_json(&root.join("package.json"))
+        .and_then(|p| p.pointer("/scripts/test").and_then(Value::as_str).map(String::from))
+        .unwrap_or_default();
+    if vitest.exists() && (script.contains("vitest") || !jest.exists()) {
+        return Some(TestRunner { vitest: true, bin: vitest });
+    }
+    if jest.exists() {
+        return Some(TestRunner { vitest: false, bin: jest });
+    }
+    None
 }
 
 fn short_version(v: &str) -> String {

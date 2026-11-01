@@ -42,7 +42,7 @@ monaco.editor.defineTheme('forge-dark', {
   colors: {
     'editor.background': '#191A1E',
     'editor.foreground': '#ECEAE6',
-    'editorLineNumber.foreground': '#6E727A',
+    'editorLineNumber.foreground': '#82858D',
     'editorLineNumber.activeForeground': '#ECEAE6',
     'editor.lineHighlightBackground': '#22232A',
     'editor.lineHighlightBorder': '#00000000',

@@ -10,7 +10,7 @@ import type { Schematic } from './bindings/Schematic';
 import type { Breakpoint } from './bindings/Breakpoint';
 import type { ApiRequest } from './bindings/ApiRequest';
 
-export type View = 'explorer' | 'graph' | 'database' | 'api' | 'tests' | 'env' | 'settings';
+export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'api' | 'tests' | 'env' | 'settings';
 export type PanelTab = 'run' | 'problems' | 'tests' | 'terminal';
 
 export interface LogLine {

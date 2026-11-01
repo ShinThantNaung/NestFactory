@@ -46,7 +46,7 @@ export function openGenerator(directory: string | null = null, module: string | 
       mod = root.name;
     } else dir = s.model.sourceRoot;
   }
-  useApp.setState({ generator: { schematic, directory: dir, module: mod } });
+  useApp.setState({ generator: { schematic, directory: dir, module: mod }, view: 'generate' });
 }
 
 export async function openProjectDialog() {
@@ -268,7 +268,7 @@ export function TitleBar() {
 export function ToolRail() {
   const view = useApp((s) => s.view);
   const issues = useApp((s) => s.model?.diagnostics.filter((d) => d.severity !== 'info').length ?? 0);
-  const items: [View | 'generate', string, string][] = [
+  const items: [View, string, string][] = [
     ['explorer', 'file', 'Explorer'],
     ['graph', 'graph', 'Module graph'],
     ['generate', 'generate', 'Generate'],
@@ -280,7 +280,7 @@ export function ToolRail() {
   return (
     <nav className="rail" aria-label="Tools">
       {items.map(([v, icon, label]) => (
-        <button key={v} aria-label={label} title={label} aria-current={view === v} onClick={() => (v === 'generate' ? openGenerator() : setView(v))}>
+        <button key={v} aria-label={label} title={label} aria-current={view === v} onClick={() => (v === 'generate' && !useApp.getState().generator ? openGenerator() : setView(v))}>
           <Icon name={icon} />
           {v === 'graph' && issues > 0 && <span className="badge-dot" />}
         </button>
@@ -301,6 +301,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const cursor = useApp((s) => s.cursor);
   const debug = useApp((s) => s.debug);
   const problems = useApp((s) => s.problems.length);
+  const view = useApp((s) => s.view);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -318,6 +319,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
         </button>
       )}
       {model.gitBranch && <span>{model.gitBranch}</span>}
+      {view === 'generate' && <span>Nest CLI schematics · @nestjs/schematics</span>}
       {dbLabel && (
         <button onClick={() => setView('database')}>
           <span className="dot ok" />
@@ -558,7 +560,7 @@ export function useGlobalKeys() {
       } else if (ctrl && e.key === '`') {
         e.preventDefault();
         useApp.setState((x) => ({ panelOpen: !x.panelOpen }));
-      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z' && !inInput && s.model && !s.preview && !s.generator) {
+      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z' && !inInput && s.model && !s.preview) {
         e.preventDefault();
         void undo();
       } else if (ctrl && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z')) && !inInput && s.model) {

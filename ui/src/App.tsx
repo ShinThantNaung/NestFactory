@@ -4,7 +4,8 @@ import { useApp, appendLog, openProject, openFile, toast } from './store';
 import { applyTheme, reloadFromDisk } from './monaco';
 import { TitleBar, ToolRail, StatusBar, Toasts, CommandPalette, useGlobalKeys } from './components/Shell';
 import { Workspace } from './components/Workspace';
-import { GeneratorDialog, PreviewDialog } from './components/Changes';
+import { PreviewDialog } from './components/Changes';
+import { GeneratorView } from './views/Generator';
 import { GraphView, useGraphToast } from './views/Graph';
 import { DatabaseView, EntityDesigner } from './views/Database';
 import { ApiView } from './views/Api';
@@ -56,6 +57,7 @@ function ProjectBody() {
       <ToolRail />
       {view === 'explorer' && <Workspace />}
       {view === 'graph' && <GraphView />}
+      {view === 'generate' && <GeneratorView />}
       {view === 'database' && <DatabaseView />}
       {view === 'api' && <ApiView />}
       {view === 'tests' && <TestsView />}
@@ -111,7 +113,6 @@ export function App() {
       {screen === 'wizard' && <Wizard />}
       {screen === 'project' && model && <ProjectBody />}
       {screen === 'project' && <StatusBar dbLabel={dbLabel} />}
-      <GeneratorDialog />
       <PreviewDialog />
       <EntityDesigner />
       <CommandPalette />
