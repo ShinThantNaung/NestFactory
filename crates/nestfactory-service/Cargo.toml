@@ -1,0 +1,30 @@
+[package]
+name = "nestfactory-service"
+description = "NestFactory backend: project state, processes, watcher, API client, debugger. Shared by the desktop shell and the dev bridge."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nestfactory-core.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+anyhow.workspace = true
+ts-rs.workspace = true
+notify = "8"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+tungstenite = "0.24"
+sourcemap = "9"
+ignore = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { version = "3", features = ["linux-native"] }
+
+[dev-dependencies]
+tempfile = "3"

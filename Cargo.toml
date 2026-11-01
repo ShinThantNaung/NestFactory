@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/nestfactory-core",
+    "crates/nestfactory-service",
+    "crates/nestfactory-bridge",
+    "src-tauri",
 ]
 
 [workspace.package]
