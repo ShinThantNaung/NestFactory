@@ -57,6 +57,17 @@ export function dirname(p: string) {
   return i < 0 ? '' : p.slice(0, i);
 }
 
+/** Shortens a long absolute path to its drive or root plus the last folders: `C:\Users\…\work\api`. */
+export function elidePath(p: string, max = 44) {
+  if (p.length <= max) return p;
+  const sep = p.includes('\\') ? '\\' : '/';
+  const parts = p.split(sep);
+  const head = parts[0];
+  let tail = parts[parts.length - 1];
+  for (let i = parts.length - 2; i > 0 && head.length + tail.length + parts[i].length + 3 <= max; i--) tail = `${parts[i]}${sep}${tail}`;
+  return `${head}${sep}…${sep}${tail}`;
+}
+
 export function classKindLabel(k: ClassKind) {
   return k.charAt(0).toUpperCase() + k.slice(1);
 }

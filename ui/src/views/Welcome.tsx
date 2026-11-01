@@ -1,15 +1,75 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, on, pickFolder } from '../api';
 import { Icon, Logo } from '../icons';
-import { useApp, openProject, setView, toast, errorText, clearLog } from '../store';
+import { useApp, openProject, setView, toast, errorText, clearLog, guard } from '../store';
 import { openProjectDialog } from '../components/Shell';
-import { ansiToHtml, basename } from '../util';
+import { ansiToHtml, elidePath } from '../util';
+import type { RecentProject } from '../bindings/RecentProject';
 import type { WizardOptions } from '../bindings/WizardOptions';
 import type { WizardPlan } from '../bindings/WizardPlan';
 import type { PackageManager } from '../bindings/PackageManager';
 
+function RecentProjects() {
+  const busy = useApp((s) => s.busy);
+  const [recent, setRecent] = useState<RecentProject[] | null>(null);
+
+  useEffect(() => {
+    api.recentProjects().then(setRecent, () => setRecent([]));
+  }, []);
+
+  const remove = async (path: string | null) => {
+    const next = await guard(api.removeRecent(path));
+    if (!next) return;
+    setRecent(next);
+    useApp.setState((s) => ({ settings: s.settings && { ...s.settings, recentProjects: next.map((p) => p.path) } }));
+  };
+
+  return (
+    <section className="col" style={{ gap: 8 }} aria-labelledby="recent-heading">
+      <div className="row" style={{ minHeight: 22 }}>
+        <span id="recent-heading" className="caps">
+          Recent projects
+        </span>
+        {!!recent?.length && (
+          <button className="btn sm ghost" style={{ marginLeft: 'auto', marginRight: -9 }} onClick={() => void remove(null)}>
+            Clear
+          </button>
+        )}
+      </div>
+      {recent === null ? (
+        <span className="faint">Loading…</span>
+      ) : recent.length === 0 ? (
+        <span className="faint" style={{ lineHeight: '19px' }}>
+          Projects you open show up here.
+        </span>
+      ) : (
+        <ul className="recent">
+          {recent.map((p) => (
+            <li key={p.path} className={`recent-item ${p.missing ? 'missing' : ''}`}>
+              <button className="open" disabled={p.missing || !!busy} title={p.missing ? `Not found: ${p.path}` : p.path} onClick={() => void openProject(p.path)}>
+                <span className="icon-tile" style={{ background: 'var(--c-module-bg)', color: 'var(--c-module)', flex: 'none' }}>
+                  <Icon name="folder" size={14} />
+                </span>
+                <span className="col" style={{ gap: 2, minWidth: 0 }}>
+                  <span className="row" style={{ gap: 8 }}>
+                    <span className="name">{p.name}</span>
+                    {p.missing ? <span className="badge warn">Not found</span> : p.nestVersion && <span className="badge tag">Nest {p.nestVersion}</span>}
+                  </span>
+                  <span className="path mono">{elidePath(p.path)}</span>
+                </span>
+              </button>
+              <button className="icon-btn remove" aria-label={`Remove ${p.name} from recent projects`} title="Remove from list" onClick={() => void remove(p.path)}>
+                <Icon name="close" size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function Welcome() {
-  const settings = useApp((s) => s.settings);
   const tc = useApp((s) => s.toolchain);
   const busy = useApp((s) => s.busy);
   return (
@@ -49,20 +109,7 @@ export function Welcome() {
           </div>
         </div>
         <div className="col" style={{ gap: 22 }}>
-          <section className="col" style={{ gap: 8 }}>
-            <span className="caps">Recent</span>
-            <div className="recent">
-              {!settings?.recentProjects.length && <span className="faint">No recent projects.</span>}
-              {settings?.recentProjects.map((p) => (
-                <button key={p} onClick={() => void openProject(p)}>
-                  <span style={{ fontWeight: 500 }}>{basename(p.replace(/\\/g, '/'))}</span>
-                  <span className="faint mono" style={{ fontSize: 11.5 }}>
-                    {p}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
+          <RecentProjects />
           <section className="col" style={{ gap: 8 }}>
             <span className="caps">Toolchain</span>
             {tc ? (

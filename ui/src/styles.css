@@ -1739,26 +1739,78 @@ legend {
 }
 
 .recent {
+  list-style: none;
+  margin: 0 -10px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.recent button {
+.recent-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.recent-item:hover {
+  background: var(--bg-raised);
+}
+
+.recent-item .open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 8px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: none;
+  color: inherit;
   cursor: pointer;
   text-align: left;
 }
 
-.recent button:hover {
-  background: var(--bg-raised);
+.recent-item .open:disabled {
+  cursor: default;
+}
+
+.recent-item .name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-item .path {
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-item.missing .name,
+.recent-item.missing .icon-tile {
+  opacity: 0.55;
+}
+
+.recent-item .remove {
+  flex: none;
+  margin-right: 6px;
+  opacity: 0;
+}
+
+.recent-item:hover .remove,
+.recent-item:focus-within .remove,
+.recent-item.missing .remove {
+  opacity: 1;
+}
+
+.badge.tag {
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
 }
 
 .wizard-step {
@@ -1800,9 +1852,10 @@ legend {
   color: var(--success);
 }
 
+/* No wrapping on desktop widths: a multi-line flex row is as tall as its content, so the
+   form would never scroll and would slide under the footer. */
 .split-v {
   display: flex;
-  flex-wrap: wrap;
   flex: 1;
   min-height: 0;
 }
@@ -1813,5 +1866,10 @@ legend {
   }
   .side.right {
     display: none;
+  }
+  .split-v {
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow: auto;
   }
 }

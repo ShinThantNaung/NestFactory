@@ -4,12 +4,14 @@
 
 pub mod debug;
 pub mod http;
+pub mod packages;
 pub mod process;
 pub mod store;
 
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,6 +24,7 @@ use nestfactory_core::env::{self as envm, EnvReport};
 use nestfactory_core::fixes;
 use nestfactory_core::generate::{self, GenerateOptions};
 use nestfactory_core::model::{FixAction, PackageManager, ProjectModel};
+use nestfactory_core::pm::PackageAction;
 use nestfactory_core::project::read_meta;
 use nestfactory_core::testing::{self, Problem, TestRun};
 use nestfactory_core::wizard::{self, PlannedFile, WizardOptions, WizardStep};
@@ -118,6 +121,8 @@ struct Inner {
     procs: Arc<ProcessManager>,
     state: Mutex<State>,
     debug: Mutex<Option<debug::Session>>,
+    /// A package manager command from the package view is running; one at a time.
+    packages_busy: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -158,6 +163,7 @@ impl Backend {
                     generation: 0,
                 }),
                 debug: Mutex::new(None),
+                packages_busy: AtomicBool::new(false),
             }),
         }
     }
@@ -215,6 +221,12 @@ impl Backend {
                 val(s)
             }
             "toolchain" => val(toolchain()),
+            "recentProjects" => val(self.inner.store.recent_projects()),
+            "removeRecent" => {
+                let path: Option<String> = opt_arg(a, "path");
+                self.inner.store.remove_recent(path.as_deref())?;
+                val(self.inner.store.recent_projects())
+            }
 
             // ---- project ----------------------------------------------------------------------
             "openProject" => {
@@ -409,6 +421,35 @@ impl Backend {
                 val(self.run_tests(e2e, file, name, coverage)?)
             }
             "typecheck" => val(self.typecheck()?),
+
+            // ---- packages -----------------------------------------------------------------------
+            "pkgList" => val(pm::list(&self.root()?)),
+            "pkgLatest" => {
+                let root = self.root()?;
+                val(packages::latest_versions(&packages::registry_url(&root), &pm::list(&root)))
+            }
+            "pkgSearch" => {
+                let query: String = arg(a, "query")?;
+                let root = self.root()?;
+                val(packages::search(&packages::registry_url(&root), &query, &pm::list(&root))?)
+            }
+            "pkgCatalog" => {
+                let list = pm::list(&self.root()?);
+                val(pm::catalog(&|n| list.packages.iter().any(|p| p.name == n)))
+            }
+            "pkgPlan" => {
+                let action: PackageAction = arg(a, "action")?;
+                let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
+                let dev: bool = opt_arg(a, "dev").unwrap_or(false);
+                let root = self.root()?;
+                val(packages::plan(&packages::registry_url(&root), self.package_manager(), &pm::list(&root), action, &specs, dev))
+            }
+            "pkgRun" => {
+                let action: PackageAction = arg(a, "action")?;
+                let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
+                let dev: bool = opt_arg(a, "dev").unwrap_or(false);
+                val(self.run_packages(action, specs, dev)?)
+            }
 
             // ---- env -------------------------------------------------------------------------------
             "envReport" => val(envm::report(&self.root()?)),
@@ -668,6 +709,35 @@ impl Backend {
             me.emit("task-done", json!({ "id": "install", "ok": ok, "error": res.err().map(|e| e.to_string()) }));
             me.rescan_and_emit(vec!["package.json".into()]);
         });
+    }
+
+    /// Runs one add, remove or install in the background as process `packages`, then emits
+    /// `task-done` and a rescan. Returns the command line.
+    fn run_packages(&self, action: PackageAction, specs: Vec<String>, dev: bool) -> Result<String> {
+        if action != PackageAction::Install && specs.is_empty() {
+            bail!("No packages given");
+        }
+        if let Some(bad) = specs.iter().find(|s| s.starts_with('-') || s.trim().is_empty()) {
+            bail!("Not a package name: {bad}");
+        }
+        let root = self.root()?;
+        let cmdline = packages::command_for(self.package_manager(), action, &specs, dev);
+        let shown = pm::display(&cmdline);
+        if self.inner.procs.is_running("install") || self.inner.packages_busy.swap(true, Ordering::SeqCst) {
+            bail!("Another install is still running");
+        }
+        let me = self.clone();
+        let line = shown.clone();
+        std::thread::spawn(move || {
+            me.emit("process-output", json!({ "id": "packages", "stream": "stdout", "text": format!("$ {line}") }));
+            let res = command(&cmdline[0], &cmdline[1..], &root, &[("FORCE_COLOR".into(), "1".into())])
+                .and_then(|c| me.inner.procs.run("packages", c))
+                .and_then(|(code, out)| if code == 0 { Ok(()) } else { Err(anyhow!("{line} failed:\n{}", tail(&out, 15))) });
+            me.inner.packages_busy.store(false, Ordering::SeqCst);
+            me.emit("task-done", json!({ "id": "packages", "ok": res.is_ok(), "error": res.err().map(|e| format!("{e:#}")) }));
+            me.rescan_and_emit(vec!["package.json".into()]);
+        });
+        Ok(shown)
     }
 
     fn install_packages(&self, install: &[String], dev: &[String], plain: bool) -> Result<()> {

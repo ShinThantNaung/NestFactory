@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 1420
+    },
+    {
+      "name": "bridge",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nestfactory-bridge", "--", "--token", "dev"],
+      "port": 1421
     }
   ]
 }

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use nestfactory_core::db::DbConfig;
 use nestfactory_core::model::PackageManager;
+use nestfactory_core::project::read_meta;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -36,6 +37,20 @@ impl Default for Settings {
             recent_projects: vec![],
         }
     }
+}
+
+/// A recent project as the landing screen lists it, read fresh from its package.json.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RecentProject {
+    pub path: String,
+    /// package.json `name`, else the folder name.
+    pub name: String,
+    pub nest_version: Option<String>,
+    pub package_manager: PackageManager,
+    /// The folder or its package.json is gone (moved, deleted, unplugged drive).
+    pub missing: bool,
 }
 
 /// A saved connection. The password is in the OS keychain, not here.
@@ -109,6 +124,36 @@ impl Store {
         s.recent_projects.truncate(10);
         self.save_settings(&s)?;
         Ok(s)
+    }
+
+    /// Removes one path from the recent list, or all of them when `path` is `None`.
+    pub fn remove_recent(&self, path: Option<&str>) -> Result<Settings> {
+        let mut s = self.settings();
+        match path {
+            Some(p) => s.recent_projects.retain(|r| !r.eq_ignore_ascii_case(p)),
+            None => s.recent_projects.clear(),
+        }
+        self.save_settings(&s)?;
+        Ok(s)
+    }
+
+    pub fn recent_projects(&self) -> Vec<RecentProject> {
+        self.settings()
+            .recent_projects
+            .into_iter()
+            .map(|path| {
+                let root = Path::new(&path);
+                let missing = !root.join("package.json").is_file();
+                let meta = read_meta(root);
+                RecentProject {
+                    nest_version: if missing { None } else { meta.major_version("@nestjs/core") },
+                    name: meta.name,
+                    package_manager: meta.package_manager,
+                    missing,
+                    path,
+                }
+            })
+            .collect()
     }
 
     fn project_path(&self, root: &Path) -> PathBuf {

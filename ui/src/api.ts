@@ -27,6 +27,13 @@ import type { HistoryItem } from './bindings/HistoryItem';
 import type { EntityOptions } from './bindings/EntityOptions';
 import type { Breakpoint } from './bindings/Breakpoint';
 import type { Variable } from './bindings/Variable';
+import type { RecentProject } from './bindings/RecentProject';
+import type { PackageList } from './bindings/PackageList';
+import type { LatestVersion } from './bindings/LatestVersion';
+import type { SearchHit } from './bindings/SearchHit';
+import type { CatalogEntry } from './bindings/CatalogEntry';
+import type { PackageAction } from './bindings/PackageAction';
+import type { PackagePlan } from './bindings/PackagePlan';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -139,6 +146,9 @@ export const api = {
   getSettings: () => call<Settings>('getSettings'),
   saveSettings: (settings: Settings) => call<Settings>('saveSettings', { settings }),
   toolchain: () => call<Toolchain>('toolchain'),
+  recentProjects: () => call<RecentProject[]>('recentProjects'),
+  /** Removes one recent project, or the whole list when `path` is null. */
+  removeRecent: (path: string | null) => call<RecentProject[]>('removeRecent', { path }),
 
   openProject: (path: string) => call<ProjectModel>('openProject', { path }),
   closeProject: () => call<boolean>('closeProject'),
@@ -178,6 +188,17 @@ export const api = {
   runCommand: (line: string) => call<number>('runCommand', { line }),
   runTests: (opts: { e2e?: boolean; file?: string | null; name?: string | null; coverage?: boolean }) => call<TestRun>('runTests', opts),
   typecheck: () => call<Problem[]>('typecheck'),
+
+  pkgList: () => call<PackageList>('pkgList'),
+  /** Asks the registry; slow-ish (one request per dependency, eight at a time). */
+  pkgLatest: () => call<LatestVersion[]>('pkgLatest'),
+  pkgSearch: (query: string) => call<SearchHit[]>('pkgSearch', { query }),
+  pkgCatalog: () => call<CatalogEntry[]>('pkgCatalog'),
+  /** Resolves versions for the project's Nest and finds missing peers; writes nothing. */
+  pkgPlan: (action: PackageAction, packages: string[], dev = false) => call<PackagePlan>('pkgPlan', { action, packages, dev }),
+  /** Starts the command in the background and returns it. Output streams as process `packages`;
+   * `task-done` with id `packages` follows, then `project-updated`. */
+  pkgRun: (action: PackageAction, packages: string[], dev = false) => call<string>('pkgRun', { action, packages, dev }),
 
   envReport: () => call<EnvReport>('envReport'),
   envSave: (file: string, updates: [string, string | null][]) => call<EnvReport>('envSave', { file, updates }),
