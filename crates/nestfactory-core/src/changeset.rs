@@ -57,11 +57,33 @@ impl Changeset {
 pub struct Tree {
     root: PathBuf,
     overlay: BTreeMap<String, Option<String>>,
+    esm: bool,
+}
+
+/// Adds `.js` to extensionless relative imports, as ESM (`"type": "module"`) projects need.
+pub fn esmify(content: &str) -> String {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r#"(from\s+|import\s+)'(\.{1,2}/[^']+?)'"#).unwrap());
+    re.replace_all(content, |c: &regex::Captures| {
+        let spec = &c[2];
+        if spec.ends_with(".js") || spec.ends_with(".json") || spec.ends_with(".mjs") || spec.ends_with(".cjs") {
+            c[0].to_string()
+        } else {
+            format!("{}'{spec}.js'", &c[1])
+        }
+    })
+    .into_owned()
 }
 
 impl Tree {
     pub fn new(root: &Path) -> Self {
-        Self { root: root.to_path_buf(), overlay: BTreeMap::new() }
+        Self { root: root.to_path_buf(), overlay: BTreeMap::new(), esm: false }
+    }
+
+    /// New `.ts` files written to an ESM project get `.js` import suffixes.
+    pub fn with_esm(root: &Path, esm: bool) -> Self {
+        Self { root: root.to_path_buf(), overlay: BTreeMap::new(), esm }
     }
 
     pub fn root(&self) -> &Path {
@@ -87,7 +109,11 @@ impl Tree {
     }
 
     pub fn write(&mut self, rel: &str, content: impl Into<String>) {
-        self.overlay.insert(rel.to_string(), Some(content.into()));
+        let mut content = content.into();
+        if self.esm && rel.ends_with(".ts") && !self.root.join(rel).is_file() {
+            content = esmify(&content);
+        }
+        self.overlay.insert(rel.to_string(), Some(content));
     }
 
     pub fn delete(&mut self, rel: &str) {

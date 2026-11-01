@@ -11,7 +11,7 @@ use crate::changeset::{Changeset, Tree};
 use crate::edit;
 use crate::env;
 use crate::model::ProjectModel;
-use crate::project::{relative_import, ProjectMeta};
+use crate::project::{import_spec, ProjectMeta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -386,7 +386,7 @@ fn merge_compose(existing: Option<String>, d: &DockerService, cfg: &DbConfig) ->
 
 pub fn plan(root: &Path, meta: &ProjectMeta, model: &ProjectModel, cfg: &DbConfig) -> Result<DbPlan> {
     validate(cfg)?;
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, meta.esm);
     let mut notes = vec![];
     let sr = &meta.source_root;
     let root_module = model
@@ -411,7 +411,7 @@ pub fn plan(root: &Path, meta: &ProjectMeta, model: &ProjectModel, cfg: &DbConfi
             tree.write(&module_file, PRISMA_MODULE);
         }
         if let Some(src) = tree.read(&root_module) {
-            let path = relative_import(&root_module, &module_file);
+            let path = import_spec(&root_module, &module_file, meta.esm);
             tree.write(&root_module, edit::declare(&src, "imports", "PrismaModule", &path));
         }
         post_commands.push(crate::pm::exec(meta.package_manager, "prisma", &["generate"]));
@@ -423,7 +423,7 @@ pub fn plan(root: &Path, meta: &ProjectMeta, model: &ProjectModel, cfg: &DbConfi
         }
         tree.write(&module_file, content);
         if let Some(src) = tree.read(&root_module) {
-            let path = relative_import(&root_module, &module_file);
+            let path = import_spec(&root_module, &module_file, meta.esm);
             let mut next = edit::declare(&src, "imports", "DatabaseModule", &path);
             if !model.modules.iter().any(|m| m.imports.iter().any(|i| i.name == "ConfigModule" && i.global)) {
                 next = edit::insert_import(&next, "ConfigModule", "@nestjs/config");

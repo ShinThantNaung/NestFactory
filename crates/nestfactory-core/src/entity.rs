@@ -14,7 +14,7 @@ use crate::edit;
 use crate::generate::{dto_source, DtoField};
 use crate::model::{ClassInfo, ProjectModel};
 use crate::naming::{camelize, classify, normalize_name, singular};
-use crate::project::{parent_dir, relative_import, ProjectMeta};
+use crate::project::{import_spec, parent_dir, ProjectMeta};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -242,7 +242,7 @@ pub fn generate_entity(root: &Path, meta: &ProjectMeta, model: &ProjectModel, op
     }
     let class = classify(&name);
     let dir = opts.directory.trim_end_matches('/').to_string();
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, meta.esm);
     let mut notes = vec![];
     let mut install = vec![];
 
@@ -283,7 +283,7 @@ pub fn generate_entity(root: &Path, meta: &ProjectMeta, model: &ProjectModel, op
                     edit::insert_metadata(&s, "imports", &format!("{orm_module}.forFeature([{entry}])")).unwrap_or(s)
                 }
             };
-            let path = relative_import(mf, &entity_path);
+            let path = import_spec(mf, &entity_path, meta.esm);
             next = edit::insert_import(&next, &class, &path);
             if opts.orm == Orm::Mongoose {
                 next = edit::insert_import(&next, &format!("{class}Schema"), &path);
@@ -355,7 +355,7 @@ pub fn sync_dto(root: &Path, meta: &ProjectMeta, entity: &ClassInfo) -> Result<C
         })
         .collect();
     let (content, _) = dto_source(&format!("create-{name}"), &fields, meta.has_dep("@nestjs/swagger"));
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, meta.esm);
     tree.write(&format!("{module_dir}/dto/create-{name}.dto.ts"), content);
     let mut cs = tree.into_changeset(format!("Sync Create{}Dto from {}", entity.name, entity.name), None);
     cs.notes.push(format!("Fields, validation rules and Swagger decorators follow {}'s columns.", entity.name));

@@ -32,7 +32,7 @@ fn import_path(model: &ProjectModel, from: &str, to: &str) -> String {
 }
 
 pub fn preview_fix(root: &Path, model: &ProjectModel, action: &FixAction) -> Result<Changeset> {
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, model.esm);
     let mut notes = vec![];
     let label;
     match action {

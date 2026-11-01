@@ -12,7 +12,7 @@ use crate::edit;
 use crate::env;
 use crate::model::PackageManager;
 use crate::pm;
-use crate::project::{read_meta, relative_import};
+use crate::project::{import_spec, read_meta};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -349,7 +349,7 @@ pub fn starter_changeset(root: &Path, opts: &WizardOptions) -> Result<Changeset>
     let sr = meta.source_root.clone();
     let app_module = format!("{sr}/app.module.ts");
     let main_file = format!("{sr}/main.ts");
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, meta.esm);
     let mut app = tree.read(&app_module).unwrap_or_default();
     let mut main = tree.read(&main_file).unwrap_or_default();
     let config = opts.config || opts.auth;
@@ -357,7 +357,7 @@ pub fn starter_changeset(root: &Path, opts: &WizardOptions) -> Result<Changeset>
     if config {
         tree.write(&format!("{sr}/config/env.validation.ts"), ENV_VALIDATION);
         app = edit::insert_import(&app, "ConfigModule", "@nestjs/config");
-        app = edit::insert_import(&app, "validate", "./config/env.validation");
+        app = edit::insert_import(&app, "validate", if meta.esm { "./config/env.validation.js" } else { "./config/env.validation" });
         app = edit::insert_metadata(&app, "imports", "ConfigModule.forRoot({ isGlobal: true, validate })").unwrap_or(app);
         main = edit::insert_import(&main, "ValidationPipe", "@nestjs/common");
         main = insert_after_create(&main, "  app.useGlobalPipes(new ValidationPipe({ whitelist: true }));\n");
@@ -385,12 +385,12 @@ pub fn starter_changeset(root: &Path, opts: &WizardOptions) -> Result<Changeset>
         ] {
             tree.write(&format!("{sr}/auth/{name}"), body);
         }
-        app = edit::declare(&app, "imports", "AuthModule", &relative_import(&app_module, &format!("{sr}/auth/auth.module.ts")));
+        app = edit::declare(&app, "imports", "AuthModule", &import_spec(&app_module, &format!("{sr}/auth/auth.module.ts"), meta.esm));
     }
     if opts.health {
         tree.write(&format!("{sr}/health/health.module.ts"), HEALTH_MODULE);
         tree.write(&format!("{sr}/health/health.controller.ts"), HEALTH_CONTROLLER);
-        app = edit::declare(&app, "imports", "HealthModule", &relative_import(&app_module, &format!("{sr}/health/health.module.ts")));
+        app = edit::declare(&app, "imports", "HealthModule", &import_spec(&app_module, &format!("{sr}/health/health.module.ts"), meta.esm));
     }
     if opts.swagger {
         main = edit::insert_import(&main, "DocumentBuilder", "@nestjs/swagger");
@@ -408,7 +408,7 @@ pub fn starter_changeset(root: &Path, opts: &WizardOptions) -> Result<Changeset>
     tree.write(&main_file, main);
 
     if !opts.lint {
-        for f in ["eslint.config.mjs", ".eslintrc.js", ".prettierrc"] {
+        for f in ["eslint.config.mjs", ".eslintrc.js", ".prettierrc", "oxlint.json", ".oxlintrc.json"] {
             if tree.exists(f) {
                 tree.delete(f);
             }
@@ -416,7 +416,7 @@ pub fn starter_changeset(root: &Path, opts: &WizardOptions) -> Result<Changeset>
         if let Some(pkg) = tree.read("package.json") {
             if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&pkg) {
                 if let Some(dev) = v.get_mut("devDependencies").and_then(|d| d.as_object_mut()) {
-                    dev.retain(|k, _| !(k.contains("eslint") || k.contains("prettier") || k == "globals"));
+                    dev.retain(|k, _| !(k.contains("eslint") || k.contains("prettier") || k.contains("oxlint") || k == "globals"));
                 }
                 if let Some(scripts) = v.get_mut("scripts").and_then(|d| d.as_object_mut()) {
                     scripts.remove("lint");

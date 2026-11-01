@@ -19,7 +19,7 @@ export const KIND_LETTER: Record<string, string> = {
   gateway: 'W',
   resolver: 'R',
   strategy: 'S',
-  main: '▸',
+  main: '>',
   other: '·',
 };
 

@@ -215,7 +215,7 @@ pub fn generate(root: &Path, meta: &ProjectMeta, opts: &GenerateOptions) -> Resu
         path = normalize_path(&format!("{path}/{name}"));
     }
 
-    let mut tree = Tree::new(root);
+    let mut tree = Tree::with_esm(root, meta.esm);
     let mut notes = vec![];
     let mut cs_install = vec![];
     let mut run_install = false;

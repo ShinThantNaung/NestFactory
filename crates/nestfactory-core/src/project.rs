@@ -259,6 +259,12 @@ pub fn relative_import(from: &str, to: &str) -> String {
     if joined.starts_with("..") { joined } else { format!("./{joined}") }
 }
 
+/// `relative_import` with the `.js` suffix ESM projects need.
+pub fn import_spec(from: &str, to: &str, esm: bool) -> String {
+    let p = relative_import(from, to);
+    if esm { format!("{p}.js") } else { p }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

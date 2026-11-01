@@ -59,7 +59,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let port: u16 = args.iter().position(|a| a == "--port").and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok()).unwrap_or(1421);
     let open = args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1)).cloned();
-    let token = std::env::var("NESTFACTORY_BRIDGE_TOKEN").unwrap_or_else(|_| nestfactory_core::wizard::dev_secret()[..24].to_string());
+    let token = args
+        .iter()
+        .position(|a| a == "--token")
+        .and_then(|i| args.get(i + 1).cloned())
+        .or_else(|| std::env::var("NESTFACTORY_BRIDGE_TOKEN").ok())
+        .unwrap_or_else(|| nestfactory_core::wizard::dev_secret()[..24].to_string());
 
     let data_dir = std::env::var_os("APPDATA")
         .map(PathBuf::from)
