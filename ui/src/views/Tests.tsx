@@ -58,10 +58,10 @@ function DebugPanel({ failing }: { failing: { suite: TestSuite; test: TestCase }
       <div style={{ flex: '1 1 240px', padding: '12px 14px', borderRight: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, overflow: 'auto', height: '100%' }}>
         <span className="caps">Variables</span>
         {!frame && <span className="faint">{debug.state === 'idle' || debug.state === 'ended' ? 'Start debugging to inspect variables.' : 'Running — set a breakpoint in the gutter (F9).'}</span>}
-        {frame?.scopes.filter((s) => s.objectId).slice(0, 3).map((s) => (
+        {frame?.scopes.filter((s) => s.objectId && s.type !== 'module').slice(0, 4).map((s) => (
           <div key={s.objectId}>
             <div className="faint" style={{ fontSize: 11, margin: '2px 0' }}>
-              {s.type === 'local' ? 'Local' : s.type === 'block' ? 'Block' : s.type === 'closure' ? `Closure${s.name ? ` (${s.name})` : ''}` : s.type}
+              {s.type === 'this' ? `this${s.name ? ` (${s.name})` : ''}` : s.type === 'local' ? 'Local' : s.type === 'block' ? 'Block' : s.type === 'closure' ? `Closure${s.name ? ` (${s.name})` : ''}` : s.type}
             </div>
             <VariableTree objectId={s.objectId} />
           </div>
@@ -194,7 +194,7 @@ export function TestsView() {
       <aside className="side" aria-label="Test explorer" style={{ maxWidth: 300 }}>
         <div className="col" style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', gap: 10 }}>
           <div className="row" style={{ justifyContent: 'space-between' }}>
-            <span className="caps">Tests · Jest</span>
+            <span className="caps">Tests · {model.dependencies.includes('vitest') ? 'Vitest' : 'Jest'}</span>
             <button className="btn sm primary" disabled={busy} onClick={() => void runTests()}>
               <Play size={10} /> {busy ? 'Running…' : 'Run all'}
             </button>

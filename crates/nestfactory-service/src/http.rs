@@ -103,9 +103,14 @@ pub fn send(req: &ApiRequest) -> ApiResponse {
 
 /// Reads endpoints from the running app's Swagger JSON, trying the usual paths.
 pub fn swagger_endpoints(port: u32) -> Result<Vec<Endpoint>> {
+    // Refused connections to localhost take ~2 s each on Windows; check the port once first.
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port as u16));
+    if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_err() {
+        anyhow::bail!("nothing is listening on port {port}");
+    }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_millis(1500)).build();
     for path in ["docs-json", "api-json", "swagger-json", "api-docs-json", "docs/json"] {
-        let url = format!("http://localhost:{port}/{path}");
+        let url = format!("http://127.0.0.1:{port}/{path}");
         let Ok(resp) = agent.get(&url).call() else { continue };
         let Ok(spec) = resp.into_json::<Value>() else { continue };
         let Some(paths) = spec.get("paths").and_then(Value::as_object) else { continue };

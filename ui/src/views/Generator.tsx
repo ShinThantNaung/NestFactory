@@ -76,7 +76,8 @@ export function GeneratorView() {
   const [moduleName, setModuleName] = useState<string | null>(gen?.module ?? null);
   const [transport, setTransport] = useState<Transport>('rest');
   const [crud, setCrud] = useState(true);
-  const [swagger, setSwagger] = useState(true);
+  const hasSwagger = model.dependencies.includes('@nestjs/swagger');
+  const [swagger, setSwagger] = useState(hasSwagger);
   const [spec, setSpec] = useState(true);
   const [flat, setFlat] = useState(false);
   const [fields, setFields] = useState<DtoField[]>([BLANK_FIELD]);
@@ -144,7 +145,7 @@ export function GeneratorView() {
     setName('');
     setTransport('rest');
     setCrud(true);
-    setSwagger(true);
+    setSwagger(hasSwagger);
     setSpec(true);
     setFlat(false);
     setFields([BLANK_FIELD]);
@@ -159,7 +160,9 @@ export function GeneratorView() {
     setWriting(false);
     if (ok) {
       reset();
-      const main = cs.files.find((f) => f.status === 'added' && !f.path.includes('.spec.') && /\.(controller|service|module|guard|pipe|interceptor|filter|gateway|resolver|dto|middleware)\.ts$/.test(f.path));
+      const added = cs.files.filter((f) => f.status === 'added' && !f.path.includes('.spec.'));
+      const order = ['controller', 'resolver', 'gateway', 'service', 'module', 'guard', 'pipe', 'interceptor', 'filter', 'middleware', 'dto'];
+      const main = order.map((k) => added.find((f) => f.path.endsWith(`.${k}.ts`))).find(Boolean) ?? added[0];
       if (main) openFile(main.path);
     }
   };

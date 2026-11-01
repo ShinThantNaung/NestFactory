@@ -325,7 +325,11 @@ impl Worker {
             None => (norm(url), line + 1, col + 1),
         };
         let rel = file.strip_prefix(&format!("{root}/")).map(String::from);
-        let scopes: Vec<Value> = f
+        let this_scope = f
+            .pointer("/this/objectId")
+            .and_then(Value::as_str)
+            .map(|id| json!({ "type": "this", "name": f.pointer("/this/className").and_then(Value::as_str).unwrap_or(""), "objectId": id }));
+        let scopes: Vec<Value> = this_scope.into_iter().chain(f
             .get("scopeChain")
             .and_then(Value::as_array)
             .into_iter()
@@ -337,7 +341,7 @@ impl Worker {
                     "name": s.get("name").and_then(Value::as_str).unwrap_or(""),
                     "objectId": s.pointer("/object/objectId").and_then(Value::as_str).unwrap_or(""),
                 })
-            })
+            }))
             .collect();
         json!({
             "function": f.get("functionName").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("(anonymous)"),
