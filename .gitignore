@@ -18,3 +18,4 @@ Thumbs.db
 
 # Local dev bridge token
 .bridge-token
+/release/
