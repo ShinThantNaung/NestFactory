@@ -14,15 +14,21 @@ pub mod ts {
 
 pub mod analyze;
 pub mod changeset;
+pub mod db;
 pub mod edit;
+pub mod entity;
+pub mod env;
 pub mod fixes;
 pub mod generate;
 pub mod layout;
 pub mod model;
 pub mod naming;
+pub mod pm;
 pub mod project;
 pub mod scanner;
 pub mod template;
+pub mod testing;
+pub mod wizard;
 
 pub use model::*;
 pub use scanner::Scanner;

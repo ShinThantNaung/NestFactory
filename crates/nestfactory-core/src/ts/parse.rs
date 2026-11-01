@@ -56,6 +56,7 @@ pub struct Property {
     pub type_text: String,
     pub optional: bool,
     pub has_initializer: bool,
+    pub initializer: Option<String>,
     pub line: u32,
 }
 
@@ -548,9 +549,12 @@ impl Parsed {
                     type_text = self.slice(s, i).to_string();
                 }
                 let mut has_initializer = false;
+                let mut initializer = None;
                 if self.is(i, "=") {
                     has_initializer = true;
-                    i = self.skip_expression(i + 1, close);
+                    let s = i + 1;
+                    i = self.skip_expression(s, close);
+                    initializer = Some(self.slice(s, i).to_string());
                 }
                 class.properties.push(Property {
                     name,
@@ -558,6 +562,7 @@ impl Parsed {
                     type_text,
                     optional,
                     has_initializer,
+                    initializer,
                     line,
                 });
             }
