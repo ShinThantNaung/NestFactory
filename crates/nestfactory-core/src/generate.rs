@@ -226,7 +226,8 @@ pub fn generate(root: &Path, meta: &ProjectMeta, opts: &GenerateOptions) -> Resu
 
     // Resource: Swagger's PartialType when available, else @nestjs/mapped-types, as the CLI does.
     let mut swagger_installed = false;
-    if schematic == Schematic::Resource && opts.crud && opts.transport != Transport::GraphqlCodeFirst {
+    // (The CLI does this even without CRUD, so NestFactory does too.)
+    if schematic == Schematic::Resource && opts.transport != Transport::GraphqlCodeFirst {
         if opts.transport == Transport::Rest && (meta.has_dep("@nestjs/swagger") || opts.swagger) {
             swagger_installed = true;
             if !meta.has_dep("@nestjs/swagger") {
