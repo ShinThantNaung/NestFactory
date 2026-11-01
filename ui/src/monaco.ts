@@ -1,0 +1,337 @@
+// Monaco setup: workers, Forge themes, decorator highlighting, Nest-aware code lenses,
+// definitions and diagnostics from the Rust model, and the buffer (model) registry.
+import * as monaco from 'monaco-editor';
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
+import TsWorker from 'monaco-editor/languages/features/typescript/ts.worker?worker';
+import JsonWorker from 'monaco-editor/languages/features/json/json.worker?worker';
+import { language as tsLanguage } from 'monaco-editor/languages/definitions/typescript/typescript';
+import { api } from './api';
+import { useApp, openFile, setDirty, toast, errorText, scheduleTypecheck } from './store';
+import { languageFor } from './util';
+import type { ProjectModel } from './bindings/ProjectModel';
+
+(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
+  getWorker(_id: string, label: string) {
+    if (label === 'typescript' || label === 'javascript') return new TsWorker();
+    if (label === 'json') return new JsonWorker();
+    return new EditorWorker();
+  },
+};
+
+export { monaco };
+
+// ---- themes -------------------------------------------------------------------------------
+monaco.editor.defineTheme('forge-dark', {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [
+    { token: '', foreground: 'ECEAE6' },
+    { token: 'keyword', foreground: 'C9A7FF' },
+    { token: 'decorator', foreground: 'F2B44C' },
+    { token: 'string', foreground: '9AD49A' },
+    { token: 'string.escape', foreground: '9AD49A' },
+    { token: 'type.identifier', foreground: '6CC9F0' },
+    { token: 'number', foreground: '6CC9F0' },
+    { token: 'comment', foreground: '878A92', fontStyle: 'italic' },
+    { token: 'regexp', foreground: 'E6B8A2' },
+    { token: 'delimiter', foreground: 'A3A6AD' },
+    { token: 'key', foreground: '6CC9F0' },
+    { token: 'string.key.json', foreground: '6CC9F0' },
+    { token: 'string.value.json', foreground: '9AD49A' },
+  ],
+  colors: {
+    'editor.background': '#191A1E',
+    'editor.foreground': '#ECEAE6',
+    'editorLineNumber.foreground': '#82858D',
+    'editorLineNumber.activeForeground': '#ECEAE6',
+    'editor.lineHighlightBackground': '#22232A',
+    'editor.lineHighlightBorder': '#00000000',
+    'editor.selectionBackground': '#3B3D45',
+    'editor.inactiveSelectionBackground': '#2C2E34',
+    'editorCursor.foreground': '#F2675F',
+    'editorIndentGuide.background1': '#26282D',
+    'editorIndentGuide.activeBackground1': '#3A3C42',
+    'editorWidget.background': '#141518',
+    'editorWidget.border': '#2A2C31',
+    'editorSuggestWidget.background': '#141518',
+    'editorSuggestWidget.selectedBackground': '#26282D',
+    'editorHoverWidget.background': '#141518',
+    'editorCodeLens.foreground': '#A3A6AD',
+    'editorGutter.background': '#191A1E',
+    'diffEditor.insertedLineBackground': '#10291F',
+    'diffEditor.insertedTextBackground': '#1B4A3666',
+    'diffEditor.removedLineBackground': '#2A1C1C',
+    'diffEditor.removedTextBackground': '#5A272466',
+    'scrollbarSlider.background': '#2A2C3199',
+    'scrollbarSlider.hoverBackground': '#3A3C42',
+    'editorError.foreground': '#F2675F',
+    'editorWarning.foreground': '#F2B44C',
+    'editorInfo.foreground': '#6CC9F0',
+    'minimap.background': '#191A1E',
+  },
+});
+
+monaco.editor.defineTheme('forge-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [
+    { token: '', foreground: '1A1B1E' },
+    { token: 'keyword', foreground: '6F45C8' },
+    { token: 'decorator', foreground: '8A5700' },
+    { token: 'string', foreground: '3C7A2E' },
+    { token: 'type.identifier', foreground: '1B65A0' },
+    { token: 'number', foreground: '1B65A0' },
+    { token: 'comment', foreground: '6B6E75', fontStyle: 'italic' },
+    { token: 'regexp', foreground: '9C4F2E' },
+    { token: 'delimiter', foreground: '50535A' },
+    { token: 'string.key.json', foreground: '1B65A0' },
+    { token: 'string.value.json', foreground: '3C7A2E' },
+  ],
+  colors: {
+    'editor.background': '#FDFCFA',
+    'editor.foreground': '#1A1B1E',
+    'editorLineNumber.foreground': '#6E7177',
+    'editorLineNumber.activeForeground': '#1A1B1E',
+    'editor.lineHighlightBackground': '#F1EFEA',
+    'editor.lineHighlightBorder': '#00000000',
+    'editorCursor.foreground': '#B8372F',
+    'editorWidget.background': '#F4F3EF',
+    'editorWidget.border': '#D3D0C8',
+    'editorGutter.background': '#FDFCFA',
+    'diffEditor.insertedLineBackground': '#E2F3E6',
+    'diffEditor.removedLineBackground': '#F8DEDB',
+    'editorCodeLens.foreground': '#50535A',
+  },
+});
+
+export function applyTheme(theme: string) {
+  const dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  monaco.editor.setTheme(dark ? 'forge-dark' : 'forge-light');
+}
+
+// ---- TypeScript language ---------------------------------------------------------------------
+const ts = monaco.typescript;
+ts.typescriptDefaults.setCompilerOptions({
+  target: ts.ScriptTarget.ES2020,
+  module: ts.ModuleKind.CommonJS,
+  moduleResolution: ts.ModuleResolutionKind.NodeJs,
+  experimentalDecorators: true,
+  emitDecoratorMetadata: true,
+  allowNonTsExtensions: true,
+  strict: false,
+});
+// Imports from node_modules can't be resolved in the browser worker; real type errors come
+// from the project's own TypeScript compiler (Run › Type check, and on save).
+ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+
+// Decorators get their own token so `@Controller` reads as Nest metadata.
+function applyMonarch() {
+  const lang = structuredClone(tsLanguage) as monaco.languages.IMonarchLanguage & { tokenizer: Record<string, unknown[]> };
+  lang.tokenizer.common = [[/@[a-zA-Z_$][\w$]*/, 'decorator'], ...(lang.tokenizer.common ?? [])];
+  monaco.languages.setMonarchTokensProvider('typescript', lang);
+}
+applyMonarch();
+monaco.languages.onLanguageEncountered('typescript', () => {
+  // The built-in loader sets the default grammar asynchronously; re-apply ours after it.
+  for (const delay of [0, 50, 250, 1000]) setTimeout(applyMonarch, delay);
+});
+
+// ---- buffers ---------------------------------------------------------------------------------
+const saved = new Map<string, number>();
+const loading = new Map<string, Promise<monaco.editor.ITextModel>>();
+
+function root() {
+  return useApp.getState().model?.root ?? '';
+}
+
+export function uriFor(path: string) {
+  return monaco.Uri.file(`${root()}/${path}`);
+}
+
+export function pathForUri(uri: monaco.Uri) {
+  const r = root().replace(/\\/g, '/').toLowerCase();
+  const p = uri.path.replace(/^\/([a-zA-Z]:)/, '$1');
+  return p.toLowerCase().startsWith(`${r}/`) ? p.slice(r.length + 1) : null;
+}
+
+export function getModel(path: string): Promise<monaco.editor.ITextModel> {
+  const existing = monaco.editor.getModel(uriFor(path));
+  if (existing) return Promise.resolve(existing);
+  if (loading.has(path)) return loading.get(path)!;
+  const p = api.readFile(path).then((content) => {
+    const again = monaco.editor.getModel(uriFor(path));
+    if (again) return again;
+    const m = monaco.editor.createModel(content, languageFor(path), uriFor(path));
+    saved.set(path, m.getAlternativeVersionId());
+    m.onDidChangeContent(() => setDirty(path, m.getAlternativeVersionId() !== saved.get(path)));
+    return m;
+  });
+  loading.set(path, p);
+  p.finally(() => loading.delete(path));
+  return p;
+}
+
+export function isDirty(path: string) {
+  const m = monaco.editor.getModel(uriFor(path));
+  return !!m && m.getAlternativeVersionId() !== saved.get(path);
+}
+
+export async function saveFile(path: string) {
+  const m = monaco.editor.getModel(uriFor(path));
+  if (!m) return;
+  try {
+    await api.writeFile(path, m.getValue());
+    saved.set(path, m.getAlternativeVersionId());
+    setDirty(path, false);
+    if (path.endsWith('.ts') && useApp.getState().settings?.typeCheckOnSave) scheduleTypecheck();
+  } catch (e) {
+    toast(errorText(e), 'error');
+  }
+}
+
+export async function saveAll() {
+  for (const t of useApp.getState().tabs) if (t.dirty) await saveFile(t.path);
+}
+
+/** Reloads files that changed on disk, unless they have unsaved edits. */
+export async function reloadFromDisk(paths: string[]) {
+  for (const path of paths) {
+    const m = monaco.editor.getModel(uriFor(path));
+    if (!m) continue;
+    if (isDirty(path)) continue;
+    try {
+      const content = await api.readFile(path);
+      if (content !== m.getValue()) {
+        m.pushEditOperations([], [{ range: m.getFullModelRange(), text: content }], () => null);
+        saved.set(path, m.getAlternativeVersionId());
+        setDirty(path, false);
+      }
+    } catch {
+      // Deleted: leave the buffer as is.
+    }
+  }
+}
+
+export function disposeAllModels() {
+  monaco.editor.getModels().forEach((m) => m.dispose());
+  saved.clear();
+}
+
+// ---- Nest-aware providers --------------------------------------------------------------------
+function model(): ProjectModel | null {
+  return useApp.getState().model;
+}
+
+monaco.editor.registerCommand('nf.sendRequest', (_accessor, method: string, path: string) => {
+  const m = model();
+  const url = `http://localhost:${m?.port ?? 3000}${path.replace(/:(\w+)/g, '1')}`;
+  useApp.setState({ view: 'api', apiDraft: { id: '', name: `${method} ${path}`, method, url, headers: [], body: method === 'GET' || method === 'DELETE' ? '' : '{\n  \n}' } });
+});
+
+monaco.editor.registerCommand('nf.openGraph', () => useApp.setState({ view: 'graph' }));
+
+monaco.languages.registerCodeLensProvider('typescript', {
+  provideCodeLenses(textModel) {
+    const path = pathForUri(textModel.uri);
+    const m = model();
+    if (!path || !m) return { lenses: [], dispose() {} };
+    const lenses: monaco.languages.CodeLens[] = [];
+    for (const r of m.routes.filter((x) => x.file === path)) {
+      const range = new monaco.Range(r.line, 1, r.line, 1);
+      lenses.push({ range, command: { id: 'nf.sendRequest', title: `${r.method} ${r.path}`, arguments: [r.method, r.path] } });
+      lenses.push({ range, command: { id: 'nf.sendRequest', title: 'Send request', arguments: [r.method, r.path] } });
+    }
+    const run = useApp.getState().testRun;
+    if (run && path.endsWith('.spec.ts')) {
+      const suite = run.suites.find((s) => s.file === path);
+      for (const t of suite?.tests ?? []) {
+        if (!t.line) continue;
+        const title = t.status === 'passed' ? `✓ passed · ${Math.round(t.durationMs)} ms` : t.status === 'failed' ? '✕ failed' : t.status;
+        lenses.push({ range: new monaco.Range(t.line, 1, t.line, 1), command: { id: '', title } });
+      }
+    }
+    for (const c of m.classes.filter((x) => x.file === path && x.kind === 'module')) {
+      lenses.push({ range: new monaco.Range(c.line, 1, c.line, 1), command: { id: 'nf.openGraph', title: 'Open in module graph' } });
+    }
+    return { lenses, dispose() {} };
+  },
+});
+
+monaco.languages.registerDefinitionProvider('typescript', {
+  provideDefinition(textModel, position) {
+    const word = textModel.getWordAtPosition(position)?.word;
+    const m = model();
+    if (!word || !m) return null;
+    const cls = m.classes.find((c) => c.name === word);
+    if (!cls) return null;
+    const here = pathForUri(textModel.uri);
+    if (cls.file === here) return null;
+    return { uri: uriFor(cls.file), range: new monaco.Range(cls.line, 1, cls.line, 1) };
+  },
+});
+
+monaco.languages.registerHoverProvider('typescript', {
+  provideHover(textModel, position) {
+    const word = textModel.getWordAtPosition(position)?.word;
+    const m = model();
+    if (!word || !m) return null;
+    const cls = m.classes.find((c) => c.name === word);
+    if (!cls) return null;
+    const mod = cls.modules.length ? `provided in **${cls.modules.join(', ')}**` : cls.kind === 'module' ? '' : '_not registered in any module_';
+    const injects = cls.injects.length ? `\n\ninjects ${cls.injects.map((i) => `\`${i.token}\``).join(', ')}` : '';
+    return { contents: [{ value: `**${cls.name}** · ${cls.kind} ${mod}${injects}\n\n\`${cls.file}:${cls.line}\`` }] };
+  },
+});
+
+monaco.editor.registerEditorOpener({
+  openCodeEditor(_source, resource, selectionOrPosition) {
+    const path = pathForUri(resource);
+    if (!path) return false;
+    const line = selectionOrPosition ? ('startLineNumber' in selectionOrPosition ? selectionOrPosition.startLineNumber : selectionOrPosition.lineNumber) : undefined;
+    openFile(path, line);
+    return true;
+  },
+});
+
+/** Graph diagnostics and tsc problems as editor markers. */
+export function updateMarkers() {
+  const s = useApp.getState();
+  const m = s.model;
+  for (const tm of monaco.editor.getModels()) {
+    const path = pathForUri(tm.uri);
+    if (!path) continue;
+    const markers: monaco.editor.IMarkerData[] = [];
+    for (const d of m?.diagnostics ?? []) {
+      if (d.file !== path || !d.line) continue;
+      const lineLen = d.line <= tm.getLineCount() ? tm.getLineMaxColumn(d.line) : 1;
+      markers.push({
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : d.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info,
+        message: `${d.title}: ${d.subject}\n${d.detail}`,
+        source: 'NestFactory',
+        startLineNumber: d.line,
+        endLineNumber: d.line,
+        startColumn: 1,
+        endColumn: lineLen,
+      });
+    }
+    for (const p of s.problems) {
+      if (p.file !== path) continue;
+      markers.push({
+        severity: p.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: p.message,
+        code: p.code,
+        source: 'tsc',
+        startLineNumber: p.line,
+        endLineNumber: p.line,
+        startColumn: p.column,
+        endColumn: p.column + 1,
+      });
+    }
+    monaco.editor.setModelMarkers(tm, 'nestfactory', markers);
+  }
+}
+
+useApp.subscribe((s, prev) => {
+  if (s.model !== prev.model || s.problems !== prev.problems) updateMarkers();
+});

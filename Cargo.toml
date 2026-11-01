@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nestfactory-core",
+    "crates/nestfactory-service",
+    "crates/nestfactory-bridge",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ShinThantNaung/NestFactory"
+
+[workspace.dependencies]
+nestfactory-core = { path = "crates/nestfactory-core" }
+nestfactory-service = { path = "crates/nestfactory-service" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+regex = "1"
+ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
