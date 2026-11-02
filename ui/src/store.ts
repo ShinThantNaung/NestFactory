@@ -60,6 +60,24 @@ export interface Preview {
   onApplied?: () => void;
 }
 
+/** Widths and visibility of the explorer (left) and inspector (right), kept between runs. */
+export interface Layout {
+  sideWidth: number;
+  sideHidden: boolean;
+  inspectorWidth: number;
+  inspectorHidden: boolean;
+}
+
+export const LAYOUT_DEFAULT: Layout = { sideWidth: 260, sideHidden: false, inspectorWidth: 300, inspectorHidden: false };
+
+function loadLayout(): Layout {
+  try {
+    return { ...LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem('nf.layout') ?? '{}') };
+  } catch {
+    return LAYOUT_DEFAULT;
+  }
+}
+
 export interface Confirm {
   title: string;
   message: string;
@@ -80,6 +98,7 @@ interface State {
   cursor: { line: number; col: number };
   panelOpen: boolean;
   panelTab: PanelTab;
+  layout: Layout;
   /** Open terminals in the panel, in tab order (their xterm instances live in terminal.ts). */
   terminals: TerminalInfo[];
   activeTerminal: string | null;
@@ -122,6 +141,7 @@ export const useApp = create<State>(() => ({
   cursor: { line: 1, col: 1 },
   panelOpen: true,
   panelTab: 'run',
+  layout: loadLayout(),
   terminals: [],
   activeTerminal: null,
   logs: {},
@@ -369,6 +389,25 @@ export async function runPackages(action: PackageAction, packages: string[], dev
     toast(errorText(e), 'error');
     return false;
   }
+}
+
+/** Changes the side panels; `persist` false while dragging, saved on release. */
+export function setLayout(patch: Partial<Layout>, persist = true) {
+  set((s) => ({ layout: { ...s.layout, ...patch } }));
+  if (!persist) return;
+  try {
+    localStorage.setItem('nf.layout', JSON.stringify(get().layout));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function toggleSidebar() {
+  setLayout({ sideHidden: !get().layout.sideHidden });
+}
+
+export function toggleInspector() {
+  setLayout({ inspectorHidden: !get().layout.inspectorHidden });
 }
 
 export function setView(view: View) {

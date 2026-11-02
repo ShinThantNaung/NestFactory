@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, openUrl } from '../api';
 import { Icon } from '../icons';
-import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast, showPreview, type PanelTab } from '../store';
+import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast, showPreview, setLayout, LAYOUT_DEFAULT, type PanelTab, type Layout } from '../store';
 import { ansiToHtml, basename, dirname, kindOf, KIND_LETTER, moduleForFile, stripAnsi } from '../util';
 import { EditorArea } from './Editor';
 import { TerminalView, TerminalActions } from './TerminalPanel';
@@ -29,6 +29,64 @@ export function moduleMenu(m: ModuleInfo): MenuItem[] {
     { label: 'Open in module graph', run: () => setView('graph') },
     { label: `Open ${basename(m.file)}`, run: () => openFile(m.file, m.line) },
   ];
+}
+
+// ---- side panels ------------------------------------------------------------------------------
+/** The explorer's or inspector's size; hidden ones stay mounted so their state survives. */
+function useSideStyle(side: 'left' | 'right'): React.CSSProperties {
+  const width = useApp((s) => (side === 'left' ? s.layout.sideWidth : s.layout.inspectorWidth));
+  const hidden = useApp((s) => (side === 'left' ? s.layout.sideHidden : s.layout.inspectorHidden));
+  // Exact widths, so the edge follows the mouse; the editor gives way instead (drags keep it usable).
+  return hidden ? { display: 'none' } : { flex: `0 0 ${width}px`, width, maxWidth: 'none', minWidth: 0 };
+}
+
+const SIDE_MIN = 180;
+const MAIN_MIN = 320;
+const RAIL = 52;
+
+/**
+ * The draggable edge between the editor and a side panel. Dragging it past about half the
+ * minimum width collapses the panel, dragging back out reopens it, and a double-click resets it.
+ */
+function SideResizer({ side }: { side: 'left' | 'right' }) {
+  const hidden = useApp((s) => (side === 'left' ? s.layout.sideHidden : s.layout.inspectorHidden));
+  const keys = side === 'left' ? (['sideWidth', 'sideHidden'] as const) : (['inspectorWidth', 'inspectorHidden'] as const);
+  const label = side === 'left' ? 'explorer' : 'inspector';
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = useApp.getState().layout;
+    const startX = e.clientX;
+    const startW = start[keys[1]] ? 0 : start[keys[0]];
+    const other = side === 'left' ? (start.inspectorHidden ? 0 : start.inspectorWidth) : start.sideHidden ? 0 : start.sideWidth;
+    const max = Math.max(SIDE_MIN, Math.min(640, window.innerWidth - RAIL - other - MAIN_MIN));
+    document.body.classList.add('resizing-col');
+    const move = (ev: MouseEvent) => {
+      const w = startW + (side === 'left' ? ev.clientX - startX : startX - ev.clientX);
+      // Collapsing keeps the width from before the drag, for when it's shown again.
+      const patch: Partial<Layout> = w < SIDE_MIN / 2 ? { [keys[1]]: true, [keys[0]]: start[keys[0]] } : { [keys[1]]: false, [keys[0]]: Math.round(Math.max(SIDE_MIN, Math.min(max, w))) };
+      setLayout(patch, false);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.classList.remove('resizing-col');
+      setLayout({});
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  return (
+    <div
+      className={`vresizer ${side} ${hidden ? 'collapsed' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize the ${label}`}
+      title={hidden ? `Drag to show the ${label}` : `Drag to resize the ${label}; double-click to reset`}
+      onMouseDown={onMouseDown}
+      onDoubleClick={() => setLayout({ [keys[0]]: LAYOUT_DEFAULT[keys[0]], [keys[1]]: false })}
+    />
+  );
 }
 
 // ---- explorer ---------------------------------------------------------------------------------
@@ -263,6 +321,7 @@ function FileTree({ dir = '', depth = 0, onMenu }: { dir?: string; depth?: numbe
 }
 
 export function Explorer() {
+  const style = useSideStyle('left');
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
   const mode = useExplorer((s) => s.mode);
@@ -285,7 +344,7 @@ export function Explorer() {
     }
   };
   return (
-    <aside className="side" aria-label="Project explorer">
+    <aside className="side" aria-label="Project explorer" style={style}>
       <div className="side-head">
         <span className="caps" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={model.root}>
           {model.name}
@@ -362,6 +421,7 @@ function InjectRow({ name, status, via }: { name: string; status: string; via: s
 }
 
 export function Inspector() {
+  const style = useSideStyle('right');
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
   const cursor = useApp((s) => s.cursor);
@@ -369,7 +429,7 @@ export function Inspector() {
   const cls: ClassInfo | undefined = [...classes].reverse().find((c) => c.line <= cursor.line) ?? classes[0];
   if (!cls) {
     return (
-      <aside className="side right" aria-label="Inspector">
+      <aside className="side right" aria-label="Inspector" style={style}>
         <div className="section">
           <span className="caps">Inspector</span>
           <span className="muted">Open a Nest file to see its routes, injections and module wiring.</span>
@@ -382,7 +442,7 @@ export function Inspector() {
   const mod = model.modules.find((m) => m.name === (cls.kind === 'module' ? cls.name : cls.modules[0]));
   const kindTone = cls.kind === 'module' ? 'module' : cls.kind === 'controller' ? 'controller' : cls.kind === 'entity' || cls.kind === 'schema' ? 'entity' : cls.kind === 'dto' ? 'dto' : 'service';
   return (
-    <aside className="side right scroll" aria-label="Inspector">
+    <aside className="side right scroll" aria-label="Inspector" style={style}>
       <div className="section">
         <span className="caps">Inspector</span>
         <div className="row">
@@ -683,10 +743,12 @@ export function Workspace() {
   return (
     <>
       <Explorer />
+      <SideResizer side="left" />
       <main className="main">
         <EditorArea />
         <BottomPanel />
       </main>
+      <SideResizer side="right" />
       <Inspector />
     </>
   );

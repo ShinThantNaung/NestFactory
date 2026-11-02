@@ -189,6 +189,19 @@ export function Icon({ name, size, className, style }: { name: keyof typeof path
   );
 }
 
+/** A window outline with one part (left bar, bottom panel, right bar) drawn solid when it's showing. */
+export function LayoutIcon({ part, on, size = 16 }: { part: 'left' | 'bottom' | 'right'; on: boolean; size?: number }) {
+  const region = part === 'left' ? { x: 3, y: 4, w: 6, h: 16 } : part === 'right' ? { x: 15, y: 4, w: 6, h: 16 } : { x: 3, y: 13, w: 18, h: 7 };
+  const divider = part === 'left' ? 'M9 4v16' : part === 'right' ? 'M15 4v16' : 'M3 13h18';
+  return (
+    <svg className="ico" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      {on && <rect x={region.x} y={region.y} width={region.w} height={region.h} style={{ fill: 'currentColor', stroke: 'none', opacity: 0.55 }} />}
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d={divider} />
+    </svg>
+  );
+}
+
 export function Play({ size = 12 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">

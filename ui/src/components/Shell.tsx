@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, pickFolder, windowAction } from '../api';
-import { Icon, Logo, Play, StopSquare } from '../icons';
+import { Icon, LayoutIcon, Logo, Play, StopSquare } from '../icons';
 import {
   useApp,
   openProject,
@@ -17,6 +17,8 @@ import {
   setView,
   guard,
   toast,
+  toggleSidebar,
+  toggleInspector,
   type View,
 } from '../store';
 import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
@@ -109,6 +111,8 @@ export function commands(): Command[] {
     { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl J', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' })) },
     { id: 'terminal', group: 'View', label: 'Terminal', kbd: 'Ctrl `', enabled: hasProject, run: toggleTerminal },
     { id: 'newTerminal', group: 'View', label: 'New terminal', kbd: 'Ctrl Shift `', enabled: hasProject, run: () => void createTerminal() },
+    { id: 'sidebar', group: 'View', label: 'Show / hide explorer', kbd: 'Ctrl B', enabled: hasProject, run: toggleSidebar },
+    { id: 'inspector', group: 'View', label: 'Show / hide inspector', kbd: 'Ctrl Alt B', enabled: hasProject, run: toggleInspector },
     { id: 'theme', group: 'View', label: 'Switch light / dark theme', run: () => void toggleTheme() },
     { id: 'generate', group: 'Nest', label: 'Generate…', kbd: 'Ctrl Alt G', enabled: hasProject, run: () => openGenerator() },
     { id: 'gen-resource', group: 'Nest', label: 'Generate resource (CRUD)', enabled: hasProject, run: () => openGenerator(null, null, 'resource') },
@@ -186,6 +190,29 @@ function Menus() {
         </div>
       ))}
     </nav>
+  );
+}
+
+/** Title-bar switches for the explorer, the bottom panel and the inspector, as in VS Code. */
+function LayoutToggles() {
+  const layout = useApp((s) => s.layout);
+  const panel = useApp((s) => s.panelOpen);
+  const show = (fn: () => void) => () => {
+    if (useApp.getState().view !== 'explorer') setView('explorer');
+    fn();
+  };
+  return (
+    <div className="layout-toggles" role="group" aria-label="Layout">
+      <button className="icon-btn" aria-pressed={!layout.sideHidden} title="Show / hide explorer (Ctrl B)" aria-label="Explorer" onClick={show(toggleSidebar)}>
+        <LayoutIcon part="left" on={!layout.sideHidden} />
+      </button>
+      <button className="icon-btn" aria-pressed={panel} title="Show / hide panel (Ctrl J)" aria-label="Panel" onClick={show(() => useApp.setState((x) => ({ panelOpen: !x.panelOpen })))}>
+        <LayoutIcon part="bottom" on={panel} />
+      </button>
+      <button className="icon-btn" aria-pressed={!layout.inspectorHidden} title="Show / hide inspector (Ctrl Alt B)" aria-label="Inspector" onClick={show(toggleInspector)}>
+        <LayoutIcon part="right" on={!layout.inspectorHidden} />
+      </button>
+    </div>
   );
 }
 
@@ -274,6 +301,7 @@ export function TitleBar() {
         {debugging && <DebugToolbar />}
       </div>
       {!debugging && <RunControls />}
+      {model && screen === 'project' && <LayoutToggles />}
       <div className="window-buttons">
         <button aria-label="Minimize" onClick={() => void windowAction('minimize')}>
           <Icon name="minimize" size={14} />
@@ -306,7 +334,20 @@ export function ToolRail() {
   return (
     <nav className="rail" aria-label="Tools">
       {items.map(([v, icon, label]) => (
-        <button key={v} aria-label={label} title={label} aria-current={view === v} onClick={() => (v === 'generate' && !useApp.getState().generator ? openGenerator() : setView(v))}>
+        <button
+          key={v}
+          aria-label={label}
+          title={v === 'explorer' ? 'Explorer (click again to hide or show it · Ctrl B)' : label}
+          aria-current={view === v}
+          onClick={() => {
+            if (v === 'explorer' && view === 'explorer') toggleSidebar();
+            else if (v === 'explorer') {
+              setView(v);
+              if (useApp.getState().layout.sideHidden) toggleSidebar();
+            } else if (v === 'generate' && !useApp.getState().generator) openGenerator();
+            else setView(v);
+          }}
+        >
           <Icon name={icon} />
           {v === 'graph' && issues > 0 && <span className="badge-dot" />}
         </button>
@@ -650,6 +691,12 @@ export function useGlobalKeys() {
         if (!s.model) return;
         if (e.shiftKey) void createTerminal();
         else toggleTerminal();
+      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        if (!s.model) return;
+        if (s.view !== 'explorer') useApp.setState({ view: 'explorer' });
+        if (e.altKey) toggleInspector();
+        else toggleSidebar();
       } else if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
         e.preventDefault();
         if (s.model) useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' }));

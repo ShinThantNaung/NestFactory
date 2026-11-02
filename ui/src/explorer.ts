@@ -3,7 +3,7 @@
 // open buffers follow a rename or close with a delete.
 import { create } from 'zustand';
 import { api } from './api';
-import { useApp, openFile, askConfirm, guard, toast } from './store';
+import { useApp, openFile, askConfirm, guard, toast, setLayout } from './store';
 import { renameBuffers, dropBuffers, isDirty } from './monaco';
 import { basename, dirname } from './util';
 
@@ -79,6 +79,7 @@ function expandTo(dir: string) {
 export function startCreate(kind: EntryKind, dir = targetDir()) {
   if (!useApp.getState().model) return;
   useApp.setState({ view: 'explorer' });
+  if (useApp.getState().layout.sideHidden) setLayout({ sideHidden: false });
   setExplorerMode('files');
   expandTo(dir);
   set({ creating: { dir, kind }, renaming: null });
