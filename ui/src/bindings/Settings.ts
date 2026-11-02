@@ -9,4 +9,8 @@ theme: string, editorFontSize: number, typeCheckOnSave: boolean,
 /**
  * Format with the project's Prettier (or the built-in formatter) on save.
  */
-formatOnSave: boolean, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };
+formatOnSave: boolean, 
+/**
+ * The terminal profile new terminals open with (`pwsh`, `cmd`, `gitbash`…); empty for the first found.
+ */
+terminalProfile: string, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };

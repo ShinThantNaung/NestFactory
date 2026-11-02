@@ -36,6 +36,7 @@ import type { PackageAction } from './bindings/PackageAction';
 import type { PackagePlan } from './bindings/PackagePlan';
 import type { PackageDetails } from './bindings/PackageDetails';
 import type { FormatResult } from './bindings/FormatResult';
+import type { TerminalProfile } from './bindings/TerminalProfile';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -195,7 +196,13 @@ export const api = {
   runScript: (script: string) => call<number>('runScript', { script }),
   stopProcess: (id: string) => call<boolean>('stopProcess', { id }),
   processes: () => call<string[]>('processes'),
-  runCommand: (line: string) => call<number>('runCommand', { line }),
+  /** Shells for the terminal panel (PowerShell, Command Prompt, Git Bash, WSL, Node.js…), the default first. */
+  terminalProfiles: () => call<TerminalProfile[]>('terminalProfiles'),
+  /** Starts a shell as terminal `id`; output streams as `pty-output`, then `pty-exit`. */
+  ptySpawn: (id: string, profile: string | null, cols: number, rows: number) => call<TerminalProfile>('ptySpawn', { id, profile, cols, rows }),
+  ptyWrite: (id: string, data: string) => call<boolean>('ptyWrite', { id, data }),
+  ptyResize: (id: string, cols: number, rows: number) => call<boolean>('ptyResize', { id, cols, rows }),
+  ptyKill: (id: string) => call<boolean>('ptyKill', { id }),
   runTests: (opts: { e2e?: boolean; file?: string | null; name?: string | null; coverage?: boolean }) => call<TestRun>('runTests', opts),
   typecheck: () => call<Problem[]>('typecheck'),
 

@@ -156,6 +156,7 @@ const paths: Record<string, ReactNode> = {
       <path d="M5 8l4 4-4 4M12 16h7" />
     </>
   ),
+  clear: <path d="M4 7h12M4 12h9M4 17h6M15 15l5 5M20 15l-5 5" />,
   send: <path d="M4 12l16-8-6 16-2-7z" />,
   trash: <path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" />,
   save: (

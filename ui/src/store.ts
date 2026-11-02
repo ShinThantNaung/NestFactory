@@ -13,11 +13,18 @@ import type { LatestVersion } from './bindings/LatestVersion';
 import type { PackageAction } from './bindings/PackageAction';
 
 export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'packages' | 'api' | 'tests' | 'env' | 'settings';
-export type PanelTab = 'run' | 'problems' | 'tests' | 'terminal';
+export type PanelTab = 'run' | 'problems' | 'tests' | 'output' | 'terminal';
 
 export interface LogLine {
   stream: string;
   text: string;
+}
+
+export interface TerminalInfo {
+  id: string;
+  name: string;
+  profile: string;
+  exited: boolean;
 }
 
 export interface Tab {
@@ -73,6 +80,9 @@ interface State {
   cursor: { line: number; col: number };
   panelOpen: boolean;
   panelTab: PanelTab;
+  /** Open terminals in the panel, in tab order (their xterm instances live in terminal.ts). */
+  terminals: TerminalInfo[];
+  activeTerminal: string | null;
   logs: Record<string, LogLine[]>;
   running: Record<string, boolean>;
   runScript: string;
@@ -112,6 +122,8 @@ export const useApp = create<State>(() => ({
   cursor: { line: 1, col: 1 },
   panelOpen: true,
   panelTab: 'run',
+  terminals: [],
+  activeTerminal: null,
   logs: {},
   running: {},
   runScript: 'start:dev',
@@ -236,7 +248,7 @@ export async function applyChangeset(cs: Changeset, onApplied?: () => void) {
     const n = res.changeset.files.length;
     toast(`${res.changeset.label} · wrote ${n} change${n === 1 ? '' : 's'}`, 'success', { label: 'Undo', run: () => undo() });
     if (res.changeset.install.length || res.changeset.installDev.length || res.changeset.runInstall) {
-      set({ panelOpen: true, panelTab: 'terminal' });
+      set({ panelOpen: true, panelTab: 'output' });
       toast('Installing packages…');
     }
     onApplied?.();

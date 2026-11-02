@@ -60,24 +60,6 @@ pub fn command(program: &str, args: &[String], cwd: &Path, env: &[(String, Strin
     Ok(cmd)
 }
 
-/// A shell command line, run through `cmd /C` or `sh -c`, for the terminal panel.
-pub fn shell_command(line: &str, cwd: &Path) -> Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut c = Command::new("cmd");
-        c.arg("/D").arg("/S").arg("/C").raw_arg(format!("\"{line}\"")).current_dir(cwd);
-        c.creation_flags(0x0800_0000);
-        c
-    }
-    #[cfg(not(windows))]
-    {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(line).current_dir(cwd);
-        c
-    }
-}
-
 fn pump<R: Read + Send + 'static>(reader: R, id: String, stream: &'static str, sink: Arc<dyn EventSink>, collect: Option<Arc<Mutex<String>>>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut r = BufReader::new(reader);
@@ -187,7 +169,8 @@ impl ProcessManager {
     }
 }
 
-fn kill_tree(pid: u32) {
+/// Ends a process and everything it started.
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

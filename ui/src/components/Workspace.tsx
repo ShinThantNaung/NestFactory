@@ -4,6 +4,7 @@ import { Icon } from '../icons';
 import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast, showPreview, type PanelTab } from '../store';
 import { ansiToHtml, basename, dirname, kindOf, KIND_LETTER, moduleForFile, stripAnsi } from '../util';
 import { EditorArea } from './Editor';
+import { TerminalView, TerminalActions } from './TerminalPanel';
 import { ContextMenu, openGenerator, type MenuItem } from './Shell';
 import { useExplorer, select, toggleFolder, collapseAll, refreshTree, setExplorerMode, startCreate, startRename, cancelInline, finishCreate, finishRename, deleteEntry, copyPath, reveal, nameProblem, type EntryKind } from '../explorer';
 import type { DirEntry } from '../bindings/DirEntry';
@@ -587,58 +588,6 @@ function TestsSummary() {
   );
 }
 
-function TerminalView() {
-  const [line, setLine] = useState('');
-  const [history, setHistory] = useState<string[]>([]);
-  const [hi, setHi] = useState(-1);
-  const running = useApp((s) => s.running.terminal);
-  return (
-    <div className="col grow">
-      <LogView id="tasks" />
-      <form
-        className="terminal-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!line.trim()) return;
-          useApp.getState().logs.tasks;
-          setHistory((h) => [line, ...h].slice(0, 50));
-          setHi(-1);
-          void guard(api.runCommand(line));
-          setLine('');
-        }}
-      >
-        <span className="mono faint">$</span>
-        <input
-          value={line}
-          onChange={(e) => setLine(e.target.value)}
-          placeholder={running ? 'A command is running — Enter runs another after stopping it' : 'Run a command in the project folder (npm, nest, git…)'}
-          aria-label="Command"
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp' && history.length) {
-              const n = Math.min(hi + 1, history.length - 1);
-              setHi(n);
-              setLine(history[n]);
-            }
-            if (e.key === 'ArrowDown') {
-              const n = Math.max(hi - 1, -1);
-              setHi(n);
-              setLine(n < 0 ? '' : history[n]);
-            }
-          }}
-        />
-        {running && (
-          <button type="button" className="btn sm" onClick={() => void api.stopProcess('terminal')}>
-            Stop
-          </button>
-        )}
-        <button type="button" className="btn sm ghost" onClick={() => clearLog('tasks')}>
-          Clear
-        </button>
-      </form>
-    </div>
-  );
-}
-
 export function BottomPanel() {
   const open = useApp((s) => s.panelOpen);
   const tab = useApp((s) => s.panelTab);
@@ -657,14 +606,21 @@ export function BottomPanel() {
   });
   if (!open) return null;
   const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
     const startY = e.clientY;
     const startH = height;
-    const move = (ev: MouseEvent) => setHeight(Math.max(110, Math.min(window.innerHeight - 220, startH + startY - ev.clientY)));
+    let h = startH;
+    document.body.classList.add('resizing-row');
+    const move = (ev: MouseEvent) => {
+      h = Math.max(110, Math.min(window.innerHeight - 220, startH + startY - ev.clientY));
+      setHeight(h);
+    };
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      document.body.classList.remove('resizing-row');
       try {
-        localStorage.setItem('nf.panelHeight', String(height));
+        localStorage.setItem('nf.panelHeight', String(h));
       } catch {
         /* storage unavailable */
       }
@@ -682,6 +638,7 @@ export function BottomPanel() {
     ],
     ['problems', <>Problems {problems > 0 && <span className="count">{problems}</span>}</>],
     ['tests', 'Tests'],
+    ['output', 'Output'],
     ['terminal', 'Terminal'],
   ];
   return (
@@ -702,11 +659,12 @@ export function BottomPanel() {
               Open Swagger
             </button>
           )}
-          {tab === 'run' && (
-            <button className="btn sm ghost" onClick={() => clearLog(debugging ? 'debug' : 'run')}>
+          {(tab === 'run' || tab === 'output') && (
+            <button className="btn sm ghost" onClick={() => clearLog(tab === 'output' ? 'tasks' : debugging ? 'debug' : 'run')}>
               Clear
             </button>
           )}
+          {tab === 'terminal' && <TerminalActions />}
           <button className="icon-btn" aria-label="Hide panel" onClick={() => useApp.setState({ panelOpen: false })}>
             <Icon name="chevronDown" size={14} />
           </button>
@@ -714,6 +672,7 @@ export function BottomPanel() {
         {tab === 'run' && <LogView id={debugging ? 'debug' : 'run'} />}
         {tab === 'problems' && <ProblemsView />}
         {tab === 'tests' && <TestsSummary />}
+        {tab === 'output' && <LogView id="tasks" />}
         {tab === 'terminal' && <TerminalView />}
       </section>
     </>

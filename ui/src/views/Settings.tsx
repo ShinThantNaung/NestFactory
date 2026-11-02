@@ -4,10 +4,16 @@ import { useApp, guard, toast } from '../store';
 import { applyTheme } from '../monaco';
 import type { Settings } from '../bindings/Settings';
 import type { Toolchain } from '../bindings/Toolchain';
+import type { TerminalProfile } from '../bindings/TerminalProfile';
+import { terminalProfiles } from '../terminal';
 
 export function SettingsView() {
   const settings = useApp((s) => s.settings);
   const [tc, setTc] = useState<Toolchain | null>(useApp.getState().toolchain);
+  const [shells, setShells] = useState<TerminalProfile[]>([]);
+  useEffect(() => {
+    terminalProfiles().then(setShells, () => {});
+  }, []);
   useEffect(() => {
     api.toolchain().then((t) => {
       setTc(t);
@@ -52,6 +58,16 @@ export function SettingsView() {
                 <option key={p} value={p} disabled={!!tc && !tc.packageManagers.includes(p)}>
                   {p}
                   {tc && !tc.packageManagers.includes(p) ? ' (not installed)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Default terminal</span>
+            <select className="input" value={settings.terminalProfile || shells[0]?.id || ''} onChange={(e) => void save({ terminalProfile: e.target.value })}>
+              {shells.map((p) => (
+                <option key={p.id} value={p.id} title={p.program}>
+                  {p.name}
                 </option>
               ))}
             </select>

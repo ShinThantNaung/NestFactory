@@ -7,6 +7,7 @@ pub mod format;
 pub mod http;
 pub mod packages;
 pub mod process;
+pub mod pty;
 pub mod store;
 
 use std::collections::HashMap;
@@ -37,7 +38,7 @@ use serde_json::{json, Value};
 use ts_rs::TS;
 
 use crate::http::{ApiRequest, Endpoint, HistoryEntry};
-use crate::process::{command, resolve_program, shell_command, ProcessManager};
+use crate::process::{command, resolve_program, ProcessManager};
 use crate::store::{DbProfile, Settings, Store};
 
 pub trait EventSink: Send + Sync + 'static {
@@ -126,6 +127,7 @@ struct Inner {
     /// A package manager command from the package view is running; one at a time.
     packages_busy: AtomicBool,
     formatter: format::Formatter,
+    terminals: pty::Terminals,
 }
 
 #[derive(Clone)]
@@ -150,6 +152,7 @@ const IGNORED_DIRS: &[&str] = &["node_modules", "dist", "coverage", ".git", "bui
 impl Backend {
     pub fn new(data_dir: PathBuf, sink: Arc<dyn EventSink>) -> Self {
         let procs = Arc::new(ProcessManager::new(sink.clone()));
+        let terminals = pty::Terminals::new(sink.clone());
         Backend {
             inner: Arc::new(Inner {
                 sink,
@@ -168,6 +171,7 @@ impl Backend {
                 debug: Mutex::new(None),
                 packages_busy: AtomicBool::new(false),
                 formatter: format::Formatter::default(),
+                terminals,
             }),
         }
     }
@@ -182,6 +186,7 @@ impl Backend {
         }
         self.inner.procs.kill_all();
         self.inner.formatter.stop();
+        self.inner.terminals.kill_all();
     }
 
     /// Runs a command. Errors are returned as display strings for the UI.
@@ -249,6 +254,7 @@ impl Backend {
                 drop(st);
                 self.inner.procs.kill_all();
                 self.inner.formatter.stop();
+                self.inner.terminals.kill_all();
                 val(true)
             }
             "rescan" => val(&*self.rescan()?),
@@ -458,12 +464,30 @@ impl Backend {
                 val(self.inner.procs.kill(&id))
             }
             "processes" => val(self.inner.procs.running()),
-            "runCommand" => {
-                let line: String = arg(a, "line")?;
-                let root = self.root()?;
-                let mut c = shell_command(&line, &root);
-                c.env("FORCE_COLOR", "1");
-                val(self.inner.procs.spawn("terminal", c)?)
+            "terminalProfiles" => val(pty::profiles()),
+            "ptySpawn" => {
+                let id: String = arg(a, "id")?;
+                let profile: Option<String> = opt_arg(a, "profile");
+                let cols: u16 = opt_arg(a, "cols").unwrap_or(100);
+                let rows: u16 = opt_arg(a, "rows").unwrap_or(24);
+                let cwd = self.root().ok().or_else(|| std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from)).unwrap_or_else(std::env::temp_dir);
+                val(self.inner.terminals.spawn(&id, profile.as_deref(), &cwd, cols, rows)?)
+            }
+            "ptyWrite" => {
+                let id: String = arg(a, "id")?;
+                let data: String = arg(a, "data")?;
+                self.inner.terminals.write(&id, &data)?;
+                val(true)
+            }
+            "ptyResize" => {
+                let id: String = arg(a, "id")?;
+                self.inner.terminals.resize(&id, arg(a, "cols")?, arg(a, "rows")?)?;
+                val(true)
+            }
+            "ptyKill" => {
+                let id: String = arg(a, "id")?;
+                self.inner.terminals.kill(&id);
+                val(true)
             }
             "runTests" => {
                 let e2e: bool = opt_arg(a, "e2e").unwrap_or(false);
@@ -650,6 +674,7 @@ impl Backend {
         }
         self.inner.procs.kill_all();
         self.inner.formatter.stop();
+        self.inner.terminals.kill_all();
         let generation;
         {
             let mut st = self.inner.state.lock().unwrap();

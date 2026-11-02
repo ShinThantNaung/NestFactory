@@ -21,6 +21,7 @@ import {
 } from '../store';
 import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
 import { startCreate } from '../explorer';
+import { createTerminal } from '../terminal';
 import { basename, fuzzyScore, kindOf, KIND_LETTER } from '../util';
 
 // ---- commands shared by menus and the palette ------------------------------------------------
@@ -48,6 +49,13 @@ export function openGenerator(directory: string | null = null, module: string | 
     } else dir = s.model.sourceRoot;
   }
   useApp.setState({ generator: { schematic, directory: dir, module: mod }, view: 'generate' });
+}
+
+/** Ctrl `: shows the terminal (starting one if none), or hides the panel when it's showing. */
+export function toggleTerminal() {
+  const s = useApp.getState();
+  if (s.panelOpen && s.panelTab === 'terminal' && s.view === 'explorer') useApp.setState({ panelOpen: false });
+  else useApp.setState({ panelOpen: true, panelTab: 'terminal', view: 'explorer' });
 }
 
 export async function openProjectDialog() {
@@ -98,7 +106,9 @@ export function commands(): Command[] {
       },
     },
     ...views.map(([v, label]) => ({ id: `view-${v}`, group: 'View', label, enabled: hasProject, run: () => setView(v) })),
-    { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl `', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen })) },
+    { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl J', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' })) },
+    { id: 'terminal', group: 'View', label: 'Terminal', kbd: 'Ctrl `', enabled: hasProject, run: toggleTerminal },
+    { id: 'newTerminal', group: 'View', label: 'New terminal', kbd: 'Ctrl Shift `', enabled: hasProject, run: () => void createTerminal() },
     { id: 'theme', group: 'View', label: 'Switch light / dark theme', run: () => void toggleTheme() },
     { id: 'generate', group: 'Nest', label: 'Generate…', kbd: 'Ctrl Alt G', enabled: hasProject, run: () => openGenerator() },
     { id: 'gen-resource', group: 'Nest', label: 'Generate resource (CRUD)', enabled: hasProject, run: () => openGenerator(null, null, 'resource') },
@@ -635,9 +645,14 @@ export function useGlobalKeys() {
       } else if (ctrl && e.altKey && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         openGenerator();
-      } else if (ctrl && e.key === '`') {
+      } else if (ctrl && e.code === 'Backquote') {
         e.preventDefault();
-        useApp.setState((x) => ({ panelOpen: !x.panelOpen }));
+        if (!s.model) return;
+        if (e.shiftKey) void createTerminal();
+        else toggleTerminal();
+      } else if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        if (s.model) useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' }));
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z' && !inInput && s.model && !s.preview) {
         e.preventDefault();
         void undo();
