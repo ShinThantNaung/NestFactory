@@ -19,8 +19,9 @@ NestFactory turns the Nest CLI, database setup and API tooling into visual, proj
 | API explorer | Endpoints from the code and from the running app's Swagger spec, a request builder, saved requests and history. Route code lenses send a request from the editor. |
 | Run, debug, test | One-click run in watch mode, a TypeScript debugger (breakpoints, call stack, variables) over the Node inspector, and a test panel for Jest or Vitest with inline results and coverage gutters. |
 | Environment manager | Edits `.env` files and checks them against the Config schema (class-validator or Joi) and against `process.env` / `ConfigService` usage: missing, unused, empty and invalid variables. |
+| Editor and terminal | Monaco with Nest-aware hovers, go-to-definition and diagnostics. Create, rename and delete files and folders from the explorer (deletes go to the Recycle Bin). Format on save with the project's own Prettier and `.prettierrc` (TypeScript's formatter when it has none; Shift Alt F on demand). Real terminals in the bottom panel: PowerShell, Command Prompt, Git Bash, WSL and Node.js, several at once. |
 
-Also: Monaco editor with Nest-aware hovers, go-to-definition and diagnostics, a command palette (Ctrl K), type checking with the project's own `tsc`, and Forge Dark / Forge Light themes.
+Also: a command palette (Ctrl K), type checking with the project's own `tsc`, a resizable and collapsible explorer and inspector (Ctrl B, Ctrl Alt B), window zoom (Ctrl +, Ctrl -, Ctrl 0), and Forge Dark / Forge Light themes.
 
 ## Architecture
 
@@ -30,7 +31,7 @@ Also: Monaco editor with Nest-aware hovers, go-to-definition and diagnostics, a 
 └───────────────────────────── one typed call: dispatch(cmd, json) ───────────────────────┘
 ┌──────────────────── nestfactory-service (Rust) ─────────────────────────────────────────┐
 │ project state · file watcher · processes · undo journal · DB setup · test runners       │
-│ API client · keychain · CDP debugger                                                    │
+│ API client · keychain · CDP debugger · terminals (pseudo-console) · Prettier daemon     │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 ┌──────────────────── nestfactory-core (Rust) ────────────────────────────────────────────┐
 │ TypeScript tokenizer and decorator parser · scanner · module graph and diagnostics      │
