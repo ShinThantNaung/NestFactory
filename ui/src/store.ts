@@ -53,6 +53,14 @@ export interface Preview {
   onApplied?: () => void;
 }
 
+export interface Confirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+}
+
 interface State {
   screen: 'welcome' | 'wizard' | 'project';
   model: ProjectModel | null;
@@ -75,6 +83,7 @@ interface State {
   testsRunning: boolean;
   generator: { schematic: Schematic; directory: string | null; module: string | null } | null;
   preview: Preview | null;
+  confirm: Confirm | null;
   breakpoints: Breakpoint[];
   debug: { state: string; detail: string; frames: DebugFrame[] | null; mode: 'app' | 'test' | null };
   apiDraft: ApiRequest | null;
@@ -111,6 +120,7 @@ export const useApp = create<State>(() => ({
   testsRunning: false,
   generator: null,
   preview: null,
+  confirm: null,
   breakpoints: [],
   debug: { state: 'idle', detail: '', frames: null, mode: null },
   apiDraft: null,
@@ -204,6 +214,12 @@ export function appendLog(id: string, line: LogLine) {
 
 export function clearLog(id: string) {
   set((s) => ({ logs: { ...s.logs, [id]: [] } }));
+}
+
+/** An in-app yes/no dialog; resolves false when dismissed. */
+export function askConfirm(opts: Omit<Confirm, 'resolve'>): Promise<boolean> {
+  get().confirm?.resolve(false);
+  return new Promise((resolve) => set({ confirm: { ...opts, resolve } }));
 }
 
 export function showPreview(changeset: Changeset, opts: Omit<Preview, 'changeset'> = {}) {

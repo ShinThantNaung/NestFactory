@@ -213,6 +213,43 @@ export async function reloadFromDisk(paths: string[]) {
   }
 }
 
+const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
+
+/** After a rename on disk: reopens the buffers under `from` at their new paths, keeping unsaved edits. */
+export async function renameBuffers(from: string, to: string) {
+  const moved: { old: string; next: string; unsaved: string | null }[] = [];
+  for (const t of useApp.getState().tabs) {
+    if (!under(t.path, from)) continue;
+    const m = monaco.editor.getModel(uriFor(t.path));
+    moved.push({ old: t.path, next: to + t.path.slice(from.length), unsaved: m && isDirty(t.path) ? m.getValue() : null });
+  }
+  if (!moved.length) return;
+  const nextOf = (p: string | null) => moved.find((x) => x.old === p)?.next ?? p;
+  useApp.setState((s) => ({ tabs: s.tabs.map((t) => ({ ...t, path: nextOf(t.path)! })), active: nextOf(s.active) }));
+  for (const mv of moved) {
+    monaco.editor.getModel(uriFor(mv.old))?.dispose();
+    saved.delete(mv.old);
+    if (mv.unsaved !== null) (await getModel(mv.next)).setValue(mv.unsaved);
+  }
+}
+
+/** After a delete on disk: closes the tabs under `path` and drops their buffers. */
+export function dropBuffers(path: string) {
+  const s = useApp.getState();
+  const gone = s.tabs.filter((t) => under(t.path, path)).map((t) => t.path);
+  if (!gone.length) return;
+  useApp.setState((st) => {
+    const tabs = st.tabs.filter((t) => !gone.includes(t.path));
+    const idx = st.tabs.findIndex((t) => t.path === st.active);
+    const active = st.active && gone.includes(st.active) ? (tabs[Math.min(idx, tabs.length - 1)]?.path ?? null) : st.active;
+    return { tabs, active };
+  });
+  for (const p of gone) {
+    monaco.editor.getModel(uriFor(p))?.dispose();
+    saved.delete(p);
+  }
+}
+
 export function disposeAllModels() {
   monaco.editor.getModels().forEach((m) => m.dispose());
   saved.clear();

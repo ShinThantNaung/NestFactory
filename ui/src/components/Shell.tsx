@@ -20,6 +20,7 @@ import {
   type View,
 } from '../store';
 import { saveAll, saveFile, applyTheme } from '../monaco';
+import { startCreate } from '../explorer';
 import { basename, fuzzyScore, kindOf, KIND_LETTER } from '../util';
 
 // ---- commands shared by menus and the palette ------------------------------------------------
@@ -78,6 +79,8 @@ export function commands(): Command[] {
   return [
     { id: 'new', group: 'File', label: 'New project…', run: () => useApp.setState({ screen: 'wizard' }) },
     { id: 'open', group: 'File', label: 'Open project…', kbd: 'Ctrl O', run: () => void openProjectDialog() },
+    { id: 'newFile', group: 'File', label: 'New file…', kbd: 'Ctrl N', enabled: hasProject, run: () => startCreate('file') },
+    { id: 'newFolder', group: 'File', label: 'New folder…', enabled: hasProject, run: () => startCreate('folder') },
     { id: 'save', group: 'File', label: 'Save', kbd: 'Ctrl S', enabled: () => !!useApp.getState().active, run: () => void saveFile(useApp.getState().active!) },
     { id: 'saveAll', group: 'File', label: 'Save all', kbd: 'Ctrl Shift S', enabled: hasProject, run: () => void saveAll() },
     { id: 'close', group: 'File', label: 'Close project', enabled: hasProject, run: () => void closeProject() },
@@ -389,6 +392,7 @@ export interface MenuItem {
   run?: () => void;
   separator?: boolean;
   disabled?: boolean;
+  kbd?: string;
 }
 
 export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
@@ -405,9 +409,10 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
       window.removeEventListener('keydown', esc);
     };
   }, [onClose]);
-  const top = Math.min(y, window.innerHeight - items.length * 31 - 20);
+  const top = Math.max(8, Math.min(y, window.innerHeight - items.length * 31 - 20));
+  const left = Math.min(x, window.innerWidth - 260);
   return (
-    <div className="context-menu" ref={ref} style={{ left: x, top }}>
+    <div className="context-menu" ref={ref} style={{ left, top }}>
       <div className="menu" role="menu">
         {items.map((it, i) =>
           it.separator ? (
@@ -423,9 +428,49 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
               }}
             >
               {it.label}
+              {it.kbd && <span className="kbd mono">{it.kbd}</span>}
             </button>
           ),
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---- confirm dialog ----------------------------------------------------------------------------------
+export function ConfirmDialog() {
+  const c = useApp((s) => s.confirm);
+  const okRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (c) setTimeout(() => okRef.current?.focus(), 0);
+  }, [c]);
+  if (!c) return null;
+  const done = (ok: boolean) => {
+    useApp.setState({ confirm: null });
+    c.resolve(ok);
+  };
+  return (
+    <div className="overlay" style={{ zIndex: 70 }} onMouseDown={(e) => e.target === e.currentTarget && done(false)} onKeyDown={(e) => e.key === 'Escape' && done(false)}>
+      <div className="dialog small confirm" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+        <div className="dialog-head">
+          {c.danger && (
+            <span className="icon-tile">
+              <Icon name="trash" size={16} />
+            </span>
+          )}
+          <h2 id="confirm-title">{c.title}</h2>
+        </div>
+        <p id="confirm-body" className="muted">
+          {c.message}
+        </p>
+        <div className="dialog-foot">
+          <button className="btn lg" style={{ marginLeft: 'auto' }} onClick={() => done(false)}>
+            Cancel
+          </button>
+          <button ref={okRef} className={`btn lg ${c.danger ? 'danger' : 'primary'}`} onClick={() => done(true)}>
+            {c.confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -556,6 +601,9 @@ export function useGlobalKeys() {
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (s.model) useApp.setState({ palette: 'files' });
+      } else if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (s.model) startCreate('file');
       } else if (ctrl && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         void openProjectDialog();

@@ -286,6 +286,18 @@ input[type='radio'] {
   border-color: var(--ember-hover);
 }
 
+.btn.danger {
+  background: var(--error-bg);
+  border-color: var(--error);
+  color: var(--error);
+  font-weight: 600;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--on-ember);
+}
+
 .btn.ghost {
   background: none;
   border-color: transparent;
@@ -914,6 +926,77 @@ legend {
   color: var(--text-3);
 }
 
+.tree-row.selected:not(.active) {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+
+.tree:focus {
+  outline: none;
+}
+
+.tree-edit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding-right: 4px;
+  flex: none;
+}
+
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--bg-editor);
+  border: 1px solid var(--ember);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.tree-input.invalid {
+  border-color: var(--error);
+}
+
+.tree-input-error {
+  position: absolute;
+  top: 25px;
+  left: 30px;
+  right: 4px;
+  z-index: 6;
+  padding: 5px 8px;
+  background: var(--error-bg);
+  border: 1px solid var(--error);
+  border-radius: 0 0 5px 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: normal;
+}
+
+.side-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.side-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.side-mode {
+  flex: none;
+  padding: 8px 10px 4px;
+}
+
+.side-mode .segmented button {
+  flex: 1;
+}
+
 .kind {
   width: 16px;
   height: 16px;
@@ -1020,7 +1103,7 @@ legend {
 }
 
 /* ---- editor ----------------------------------------------------------------------- */
-.main {
+main.main {
   flex: 999 1 560px;
   min-width: 0;
   display: flex;
@@ -1291,6 +1374,17 @@ legend {
   flex: none;
   max-width: 560px;
   margin: auto;
+}
+
+.dialog.confirm {
+  max-width: 440px;
+}
+
+.dialog.confirm p {
+  margin: 0;
+  padding: 18px 20px 20px;
+  line-height: 20px;
+  user-select: text;
 }
 
 .dialog-head {

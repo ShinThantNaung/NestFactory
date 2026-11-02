@@ -132,6 +132,25 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  fileAdd: (
+    <>
+      <path d="M12 21H6V3h8l4 4v5" />
+      <path d="M14 3v4h4M18 15v6M15 18h6" />
+    </>
+  ),
+  folderAdd: (
+    <>
+      <path d="M12 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3" />
+      <path d="M18 14v6M15 17h6" />
+    </>
+  ),
+  collapseAll: (
+    <>
+      <path d="M8 4h10a2 2 0 0 1 2 2v10" />
+      <rect x="4" y="8" width="12" height="12" rx="2" />
+      <path d="M7.5 14h5" />
+    </>
+  ),
   terminal: (
     <>
       <path d="M5 8l4 4-4 4M12 16h7" />

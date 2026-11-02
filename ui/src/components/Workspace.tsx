@@ -5,6 +5,7 @@ import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast,
 import { ansiToHtml, basename, dirname, kindOf, KIND_LETTER, moduleForFile, stripAnsi } from '../util';
 import { EditorArea } from './Editor';
 import { ContextMenu, openGenerator, type MenuItem } from './Shell';
+import { useExplorer, select, toggleFolder, collapseAll, refreshTree, setExplorerMode, startCreate, startRename, cancelInline, finishCreate, finishRename, deleteEntry, copyPath, reveal, nameProblem, type EntryKind } from '../explorer';
 import type { DirEntry } from '../bindings/DirEntry';
 import type { ModuleInfo } from '../bindings/ModuleInfo';
 import type { ClassInfo } from '../bindings/ClassInfo';
@@ -30,11 +31,83 @@ export function moduleMenu(m: ModuleInfo): MenuItem[] {
 }
 
 // ---- explorer ---------------------------------------------------------------------------------
-function NestTree() {
+type OpenMenu = (e: React.MouseEvent, items: MenuItem[]) => void;
+
+/** The context menu for a file or folder row, in either tree. */
+function entryMenu(path: string, dir: boolean): MenuItem[] {
+  const parent = dir ? path : dirname(path);
+  return [
+    ...(dir ? [] : [{ label: 'Open', run: () => openFile(path) }]),
+    { label: 'New file…', kbd: 'Ctrl N', run: () => startCreate('file', parent) },
+    { label: 'New folder…', run: () => startCreate('folder', parent) },
+    { separator: true, label: '' },
+    { label: 'Rename…', kbd: 'F2', run: () => startRename(path) },
+    { label: 'Delete', kbd: 'Del', run: () => void deleteEntry(path, dir) },
+    { separator: true, label: '' },
+    { label: 'Copy path', run: () => copyPath(path, false) },
+    { label: 'Copy relative path', run: () => copyPath(path, true) },
+    { label: 'Reveal in File Explorer', run: () => reveal(path) },
+  ];
+}
+
+/** An inline name box in the tree, for a new entry or a rename. */
+function InlineName({ pad, kind, initial, siblings, onSubmit }: { pad: number; kind: EntryKind; initial: string; siblings: string[]; onSubmit: (name: string) => void }) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    const dot = initial.lastIndexOf('.');
+    el.setSelectionRange(0, kind === 'file' && dot > 0 ? dot : initial.length);
+  }, [initial, kind]);
+  const problem = value.trim() && value.trim() !== initial ? nameProblem(value, siblings, initial || undefined) : null;
+  const settle = (submit: boolean) => {
+    if (settled.current) return;
+    settled.current = true;
+    if (submit && !problem && value.trim()) onSubmit(value);
+    else cancelInline();
+  };
+  const k = kindOf(value);
+  return (
+    <div className="tree-edit" style={{ paddingLeft: pad }}>
+      {kind === 'folder' ? <Icon name="chevronRight" size={12} /> : <span className={`kind ${k}`}>{KIND_LETTER[k]}</span>}
+      <input
+        ref={ref}
+        className={`tree-input mono ${problem ? 'invalid' : ''}`}
+        value={value}
+        spellCheck={false}
+        aria-label={initial ? `Rename ${initial}` : kind === 'folder' ? 'New folder name' : 'New file name'}
+        aria-invalid={!!problem}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (!problem) settle(true);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            settle(false);
+          }
+        }}
+        onBlur={() => settle(true)}
+      />
+      {problem && (
+        <div className="tree-input-error" role="alert">
+          {problem}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NestTree({ onMenu }: { onMenu: OpenMenu }) {
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
+  const selected = useExplorer((s) => s.selected);
+  const renaming = useExplorer((s) => s.renaming);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const issuesByModule = useMemo(() => {
     const map: Record<string, string> = {};
     for (const d of model.diagnostics) {
@@ -53,22 +126,57 @@ function NestTree() {
       .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path));
   const loose = model.files.filter((f) => !f.module);
   const activeModule = moduleForFile(model, active)?.name;
+  const siblingsOf = (path: string) => model.files.filter((f) => dirname(f.path) === dirname(path)).map((f) => basename(f.path));
+
+  const fileRow = (path: string, kind: string, label: string, pad?: number) =>
+    renaming === path ? (
+      <InlineName key={path} pad={pad ?? 8} kind="file" initial={basename(path)} siblings={siblingsOf(path)} onSubmit={(n) => void finishRename(path, n)} />
+    ) : (
+      <button
+        key={path}
+        className={`tree-row ${path === active ? 'active' : ''} ${selected?.path === path ? 'selected' : ''} ${kind === 'spec' ? 'dim' : ''}`}
+        style={pad ? { paddingLeft: pad } : undefined}
+        onClick={() => {
+          select(path, false);
+          openFile(path);
+        }}
+        onContextMenu={(e) => {
+          select(path, false);
+          onMenu(e, entryMenu(path, false));
+        }}
+        title={path}
+      >
+        <span className={`kind ${kind}`}>{KIND_LETTER[kind]}</span>
+        <span className="label">{label}</span>
+        {model.diagnostics.some((d) => d.file === path && d.severity !== 'info') && <span className="dot warn" style={{ marginLeft: 'auto' }} aria-label="Has issues" />}
+      </button>
+    );
 
   return (
-    <div className="tree">
+    <>
       {modules.map((m) => {
         const open = collapsed[m.name] === undefined ? m.name === activeModule : !collapsed[m.name];
         const issue = issuesByModule[m.name];
         const meta = issue ?? (model.rootModules.includes(m.name) ? 'root' : m.orm ?? (m.global ? 'global' : ''));
+        const dir = dirname(m.file);
         return (
           <div key={m.name}>
             <button
-              className="tree-row"
-              onClick={() => setCollapsed((c) => ({ ...c, [m.name]: open }))}
+              className={`tree-row ${selected?.path === dir && selected.dir ? 'selected' : ''}`}
+              onClick={() => {
+                select(dir, true);
+                setCollapsed((c) => ({ ...c, [m.name]: open }));
+              }}
               onDoubleClick={() => openFile(m.file, m.line)}
               onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ x: e.clientX, y: e.clientY, items: moduleMenu(m) });
+                select(dir, true);
+                onMenu(e, [
+                  ...moduleMenu(m),
+                  { separator: true, label: '' },
+                  { label: `New file in ${dir || 'the project root'}…`, run: () => startCreate('file', dir) },
+                  { label: 'New folder…', run: () => startCreate('folder', dir) },
+                  { label: 'Reveal in File Explorer', run: () => reveal(dir) },
+                ]);
               }}
               aria-expanded={open}
             >
@@ -81,14 +189,7 @@ function NestTree() {
                 </span>
               )}
             </button>
-            {open &&
-              filesOf(m.name).map((f) => (
-                <button key={f.path} className={`tree-row ${f.path === active ? 'active' : ''} ${f.kind === 'spec' ? 'dim' : ''}`} style={{ paddingLeft: 40 }} onClick={() => openFile(f.path)} title={f.path}>
-                  <span className={`kind ${f.kind}`}>{KIND_LETTER[f.kind]}</span>
-                  <span className="label">{basename(f.path)}</span>
-                  {model.diagnostics.some((d) => d.file === f.path && d.severity !== 'info') && <span className="dot warn" style={{ marginLeft: 'auto' }} aria-label="Has issues" />}
-                </button>
-              ))}
+            {open && filesOf(m.name).map((f) => fileRow(f.path, f.kind, basename(f.path), 40))}
           </div>
         );
       })}
@@ -97,42 +198,63 @@ function NestTree() {
           <div className="caps" style={{ padding: '12px 8px 4px', fontSize: 10.5 }}>
             Other files
           </div>
-          {loose.map((f) => (
-            <button key={f.path} className={`tree-row ${f.path === active ? 'active' : ''} ${f.kind === 'spec' ? 'dim' : ''}`} onClick={() => openFile(f.path)} title={f.path}>
-              <span className={`kind ${f.kind}`}>{KIND_LETTER[f.kind]}</span>
-              <span className="label">{f.path}</span>
-            </button>
-          ))}
+          {loose.map((f) => fileRow(f.path, f.kind, f.path))}
         </>
       )}
-      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
-    </div>
+    </>
   );
 }
 
-function FileTree({ dir = '', depth = 0 }: { dir?: string; depth?: number }) {
+function FileTree({ dir = '', depth = 0, onMenu }: { dir?: string; depth?: number; onMenu: OpenMenu }) {
   const [entries, setEntries] = useState<DirEntry[] | null>(null);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
   const active = useApp((s) => s.active);
   const model = useApp((s) => s.model);
+  const expanded = useExplorer((s) => s.expanded);
+  const selected = useExplorer((s) => s.selected);
+  const creating = useExplorer((s) => s.creating);
+  const renaming = useExplorer((s) => s.renaming);
+  const version = useExplorer((s) => s.version);
   useEffect(() => {
-    api.listDir(dir).then(setEntries, () => setEntries([]));
-  }, [dir, model]);
+    let live = true;
+    api.listDir(dir).then(
+      (e) => live && setEntries(e),
+      () => live && setEntries([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [dir, model, version]);
   if (!entries) return null;
+  const names = entries.map((e) => e.name);
+  const pad = 8 + depth * 14;
   return (
     <>
+      {creating?.dir === dir && <InlineName pad={pad} kind={creating.kind} initial="" siblings={names} onSubmit={(n) => void finishCreate(n)} />}
       {entries.map((e) => (
         <div key={e.path}>
-          <button
-            className={`tree-row ${e.path === active ? 'active' : ''} ${e.ignored ? 'dim' : ''}`}
-            style={{ paddingLeft: 8 + depth * 14 }}
-            onClick={() => (e.dir ? setOpen((o) => ({ ...o, [e.path]: !o[e.path] })) : openFile(e.path))}
-            title={e.path}
-          >
-            {e.dir ? <Icon name={open[e.path] ? 'chevronDown' : 'chevronRight'} size={12} /> : <span className={`kind ${kindOf(e.path)}`}>{KIND_LETTER[kindOf(e.path)]}</span>}
-            <span className="label">{e.name}</span>
-          </button>
-          {e.dir && open[e.path] && <FileTree dir={e.path} depth={depth + 1} />}
+          {renaming === e.path ? (
+            <InlineName pad={pad} kind={e.dir ? 'folder' : 'file'} initial={e.name} siblings={names} onSubmit={(n) => void finishRename(e.path, n)} />
+          ) : (
+            <button
+              className={`tree-row ${e.path === active ? 'active' : ''} ${selected?.path === e.path ? 'selected' : ''} ${e.ignored ? 'dim' : ''}`}
+              style={{ paddingLeft: pad }}
+              onClick={() => {
+                select(e.path, e.dir);
+                if (e.dir) toggleFolder(e.path);
+                else openFile(e.path);
+              }}
+              onContextMenu={(ev) => {
+                select(e.path, e.dir);
+                onMenu(ev, entryMenu(e.path, e.dir));
+              }}
+              title={e.path}
+              aria-expanded={e.dir ? !!expanded[e.path] : undefined}
+            >
+              {e.dir ? <Icon name={expanded[e.path] ? 'chevronDown' : 'chevronRight'} size={12} /> : <span className={`kind ${kindOf(e.path)}`}>{KIND_LETTER[kindOf(e.path)]}</span>}
+              <span className="label">{e.name}</span>
+            </button>
+          )}
+          {e.dir && expanded[e.path] && <FileTree dir={e.path} depth={depth + 1} onMenu={onMenu} />}
         </div>
       ))}
     </>
@@ -142,24 +264,71 @@ function FileTree({ dir = '', depth = 0 }: { dir?: string; depth?: number }) {
 export function Explorer() {
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
-  const [mode, setMode] = useState<'nest' | 'files'>('nest');
+  const mode = useExplorer((s) => s.mode);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const target = moduleForFile(model, active) ?? model.modules.find((m) => m.name === model.rootModules[0]);
+  const onMenu: OpenMenu = (e, items) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const sel = useExplorer.getState().selected;
+    if (!sel || (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (e.key === 'F2') {
+      e.preventDefault();
+      startRename(sel.path);
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      void deleteEntry(sel.path, sel.dir);
+    }
+  };
   return (
     <aside className="side" aria-label="Project explorer">
       <div className="side-head">
-        <span className="caps" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span className="caps" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={model.root}>
           {model.name}
         </span>
-        <div className="segmented">
-          <button aria-pressed={mode === 'nest'} onClick={() => setMode('nest')}>
+        <div className="side-actions">
+          <button className="icon-btn" title="New file (Ctrl N)" aria-label="New file" onClick={() => startCreate('file')}>
+            <Icon name="fileAdd" size={16} />
+          </button>
+          <button className="icon-btn" title="New folder" aria-label="New folder" onClick={() => startCreate('folder')}>
+            <Icon name="folderAdd" size={16} />
+          </button>
+          <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={refreshTree}>
+            <Icon name="restart" size={15} />
+          </button>
+          <button className="icon-btn" title="Collapse folders" aria-label="Collapse folders" disabled={mode !== 'files'} onClick={collapseAll}>
+            <Icon name="collapseAll" size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="side-mode">
+        <div className="segmented" style={{ width: '100%' }}>
+          <button aria-pressed={mode === 'nest'} onClick={() => setExplorerMode('nest')}>
             Nest
           </button>
-          <button aria-pressed={mode === 'files'} onClick={() => setMode('files')}>
+          <button aria-pressed={mode === 'files'} onClick={() => setExplorerMode('files')}>
             Files
           </button>
         </div>
       </div>
-      <div className="scroll grow">{mode === 'nest' ? <NestTree /> : <div className="tree"><FileTree /></div>}</div>
+      <div
+        className="scroll grow tree"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        onContextMenu={(e) =>
+          onMenu(e, [
+            { label: 'New file…', kbd: 'Ctrl N', run: () => startCreate('file', '') },
+            { label: 'New folder…', run: () => startCreate('folder', '') },
+            { separator: true, label: '' },
+            { label: 'Reveal in File Explorer', run: () => reveal('') },
+          ])
+        }
+      >
+        {mode === 'nest' ? <NestTree onMenu={onMenu} /> : <FileTree onMenu={onMenu} />}
+      </div>
       <div className="side-foot">
         <button className="btn" onClick={() => openGenerator(target ? dirname(target.file) : null, target?.name ?? null)}>
           <Icon name="plus" size={15} />
@@ -169,6 +338,7 @@ export function Explorer() {
           Right-click any module for generators
         </div>
       </div>
+      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
     </aside>
   );
 }

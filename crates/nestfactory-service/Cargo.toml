@@ -16,6 +16,7 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 tungstenite = "0.24"
 sourcemap = "9"
 ignore = "0.4"
+trash = "5"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }

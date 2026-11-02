@@ -268,23 +268,62 @@ impl Backend {
                 std::fs::write(&p, content).with_context(|| format!("writing {rel}"))?;
                 val(true)
             }
-            "deleteFile" => {
+            "createFile" | "createDir" => {
                 let rel: String = arg(a, "path")?;
                 let p = self.path_in_root(&rel)?;
-                if p.is_dir() {
-                    std::fs::remove_dir_all(&p)?;
+                if p == self.root()? {
+                    bail!("Give the new {} a name", if cmd == "createDir" { "folder" } else { "file" });
+                }
+                if p.exists() {
+                    bail!("{rel} already exists");
+                }
+                if cmd == "createDir" {
+                    std::fs::create_dir_all(&p).with_context(|| format!("creating {rel}"))?;
                 } else {
-                    std::fs::remove_file(&p)?;
+                    if let Some(parent) = p.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(&p).with_context(|| format!("creating {rel}"))?;
                 }
                 val(true)
             }
-            "renameFile" => {
-                let from = self.path_in_root(&arg::<String>(a, "from")?)?;
-                let to = self.path_in_root(&arg::<String>(a, "to")?)?;
-                if to.exists() {
-                    bail!("{} already exists", to.display());
+            "deleteFile" => {
+                let rel: String = arg(a, "path")?;
+                let p = self.path_in_root(&rel)?;
+                if p == self.root()? {
+                    bail!("The project folder itself can't be deleted from here");
                 }
-                std::fs::rename(from, to)?;
+                if !p.exists() {
+                    bail!("{rel} doesn't exist");
+                }
+                // The Recycle Bin, as in Explorer and VS Code, so a slip can be restored.
+                trash::delete(&p).with_context(|| format!("moving {rel} to the Recycle Bin"))?;
+                val(true)
+            }
+            "renameFile" => {
+                let from_rel: String = arg(a, "from")?;
+                let to_rel: String = arg(a, "to")?;
+                let from = self.path_in_root(&from_rel)?;
+                let to = self.path_in_root(&to_rel)?;
+                let root = self.root()?;
+                if from == root || to == root {
+                    bail!("The project folder itself can't be renamed from here");
+                }
+                // A case-only rename (user.ts → User.ts) finds the file itself on Windows.
+                let same_file = from_rel.to_lowercase() == to_rel.to_lowercase();
+                if to.exists() && !same_file {
+                    bail!("{to_rel} already exists");
+                }
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&from, &to).with_context(|| format!("renaming {from_rel} to {to_rel}"))?;
+                val(true)
+            }
+            "revealPath" => {
+                let rel: String = arg(a, "path")?;
+                let p = self.path_in_root(&rel)?;
+                reveal(&p)?;
                 val(true)
             }
 
@@ -680,7 +719,8 @@ impl Backend {
             if name == ".git" {
                 continue;
             }
-            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            // Follows symlinks and junctions, so a linked node_modules lists as a folder.
+            let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
             let path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
             out.push(DirEntry { ignored: IGNORED_DIRS.contains(&name.as_str()), name, path, dir: is_dir });
         }
@@ -1172,6 +1212,21 @@ fn short_version(v: &str) -> String {
         return format!("{} {}", words[0], words[1]);
     }
     v.to_string()
+}
+
+/// Shows a file or folder in the system file manager, selected.
+fn reveal(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // explorer.exe exits with 1 even when it worked, so the status means nothing.
+        std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", path.display())).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("-R").arg(path).spawn()?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn()?;
+    Ok(())
 }
 
 pub fn tail(s: &str, lines: usize) -> String {

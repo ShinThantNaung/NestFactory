@@ -158,8 +158,14 @@ export const api = {
   listFiles: () => call<string[]>('listFiles'),
   readFile: (path: string) => call<{ content: string }>('readFile', { path }).then((r) => r.content),
   writeFile: (path: string, content: string) => call<boolean>('writeFile', { path, content }),
+  /** Creates an empty file (and missing parent folders); fails if it exists. */
+  createFile: (path: string) => call<boolean>('createFile', { path }),
+  createDir: (path: string) => call<boolean>('createDir', { path }),
+  /** Moves a file or folder to the Recycle Bin. */
   deleteFile: (path: string) => call<boolean>('deleteFile', { path }),
   renameFile: (from: string, to: string) => call<boolean>('renameFile', { from, to }),
+  /** Shows the file or folder selected in Explorer (Finder on macOS). */
+  revealPath: (path: string) => call<boolean>('revealPath', { path }),
 
   previewGenerate: (options: GenerateOptions) => call<Changeset>('previewGenerate', { options }),
   previewFix: (action: FixAction) => call<Changeset>('previewFix', { action }),
