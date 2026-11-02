@@ -110,7 +110,7 @@ export function SettingsView() {
         <section className="col" style={{ gap: 8 }}>
           <span className="caps">About</span>
           <span className="muted">NestFactory 0.1.0 · Rust core, Tauri shell, Monaco editor.</span>
-          <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => toast('Shortcuts: Ctrl K commands · Ctrl P files · Ctrl Alt G generate · Ctrl Z undo generation · F5 debug · F9 breakpoint · Ctrl ` panel')}>
+          <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => toast('Shortcuts: Ctrl K commands · Ctrl P files · Ctrl N new file · F2 rename · Del delete · Ctrl S save and format · Shift Alt F format · Ctrl ` terminal · Ctrl Shift ` new terminal · Ctrl J panel · Ctrl B explorer · Ctrl Alt B inspector · Ctrl + / Ctrl - / Ctrl 0 zoom · Ctrl Alt G generate · F5 debug · F9 breakpoint')}>
             Keyboard shortcuts
           </button>
         </section>

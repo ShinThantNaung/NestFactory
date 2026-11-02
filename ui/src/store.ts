@@ -127,6 +127,8 @@ interface State {
   latestVersions: LatestVersion[] | null;
   /** The formatter the last format used, and its error if it failed (for the status bar). */
   formatter: { name: string; version: string | null; error: string | null } | null;
+  /** Window zoom factor (1 = 100%). */
+  zoom: number;
 }
 
 export const useApp = create<State>(() => ({
@@ -166,6 +168,7 @@ export const useApp = create<State>(() => ({
   lastPackageCommand: null,
   latestVersions: null,
   formatter: null,
+  zoom: 1,
 }));
 
 const set = useApp.setState;

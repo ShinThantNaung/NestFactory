@@ -7,6 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { api, on, openUrl } from './api';
 import { useApp, toast, errorText } from './store';
+import { zoomKey } from './zoom';
 import type { TerminalProfile } from './bindings/TerminalProfile';
 
 interface Instance {
@@ -168,6 +169,7 @@ function keys(term: Terminal, e: KeyboardEvent): boolean {
   // Let the browser fire a paste event; xterm turns it into input (bracketed when asked).
   if (ctrl && !e.altKey && key === 'v') return false;
   if (ctrl && !e.altKey && (key === 'p' || key === 'b' || key === 'j' || e.code === 'Backquote')) return false;
+  if (zoomKey(e)) return false;
   return true;
 }
 

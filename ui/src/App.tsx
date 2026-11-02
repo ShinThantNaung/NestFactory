@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { api, on, launchProject } from './api';
 import { useApp, appendLog, openProject, openFile, toast } from './store';
 import { applyTheme, reloadFromDisk } from './monaco';
-import { TitleBar, ToolRail, StatusBar, Toasts, CommandPalette, ConfirmDialog, useGlobalKeys } from './components/Shell';
+import { TitleBar, ToolRail, StatusBar, Toasts, CommandPalette, ConfirmDialog, ZoomHud, useGlobalKeys } from './components/Shell';
+import { restoreZoom } from './zoom';
 import { Workspace } from './components/Workspace';
 import { PreviewDialog } from './components/Changes';
 import { GeneratorView } from './views/Generator';
@@ -83,6 +84,7 @@ export function App() {
   useGraphToast();
 
   useEffect(() => {
+    restoreZoom();
     (async () => {
       try {
         const settings = await api.getSettings();
@@ -124,6 +126,7 @@ export function App() {
       <EntityDesigner />
       <CommandPalette />
       <ConfirmDialog />
+      <ZoomHud />
       <Toasts />
     </div>
   );

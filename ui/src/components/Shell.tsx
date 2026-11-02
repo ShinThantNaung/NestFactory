@@ -24,6 +24,8 @@ import {
 import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
 import { startCreate } from '../explorer';
 import { createTerminal } from '../terminal';
+import { zoomIn, zoomOut, resetZoom, zoomKey } from '../zoom';
+import { isTauri } from '../api';
 import { basename, fuzzyScore, kindOf, KIND_LETTER } from '../util';
 
 // ---- commands shared by menus and the palette ------------------------------------------------
@@ -113,6 +115,9 @@ export function commands(): Command[] {
     { id: 'newTerminal', group: 'View', label: 'New terminal', kbd: 'Ctrl Shift `', enabled: hasProject, run: () => void createTerminal() },
     { id: 'sidebar', group: 'View', label: 'Show / hide explorer', kbd: 'Ctrl B', enabled: hasProject, run: toggleSidebar },
     { id: 'inspector', group: 'View', label: 'Show / hide inspector', kbd: 'Ctrl Alt B', enabled: hasProject, run: toggleInspector },
+    { id: 'zoomIn', group: 'View', label: 'Zoom in', kbd: 'Ctrl +', run: zoomIn },
+    { id: 'zoomOut', group: 'View', label: 'Zoom out', kbd: 'Ctrl -', run: zoomOut },
+    { id: 'zoomReset', group: 'View', label: 'Reset zoom', kbd: 'Ctrl 0', enabled: () => useApp.getState().zoom !== 1, run: resetZoom },
     { id: 'theme', group: 'View', label: 'Switch light / dark theme', run: () => void toggleTheme() },
     { id: 'generate', group: 'Nest', label: 'Generate…', kbd: 'Ctrl Alt G', enabled: hasProject, run: () => openGenerator() },
     { id: 'gen-resource', group: 'Nest', label: 'Generate resource (CRUD)', enabled: hasProject, run: () => openGenerator(null, null, 'resource') },
@@ -371,6 +376,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const view = useApp((s) => s.view);
   const lastPkg = useApp((s) => s.lastPackageCommand);
   const formatter = useApp((s) => s.formatter);
+  const zoom = useApp((s) => s.zoom);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -413,6 +419,12 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
       <span style={{ marginLeft: 'auto' }}>
         {model.nestVersion ? `NestJS ${model.nestVersion}` : 'NestJS'} · TypeScript
       </span>
+      {zoom !== 1 && (
+        <button title="Reset zoom (Ctrl 0)" onClick={resetZoom}>
+          <Icon name="search" size={12} />
+          {Math.round(zoom * 100)}%
+        </button>
+      )}
       <span>
         Ln {cursor.line}, Col {cursor.col}
       </span>
@@ -723,9 +735,43 @@ export function useGlobalKeys() {
         useApp.setState({ palette: null });
       }
     };
+    // Zoom runs in the capture phase, before the editor or a terminal can take the keys.
+    const onZoomKey = (e: KeyboardEvent) => {
+      const act = isTauri ? zoomKey(e) : null;
+      if (!act) return;
+      e.preventDefault();
+      e.stopPropagation();
+      act();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onZoomKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onZoomKey, true);
+    };
   }, []);
+}
+
+/** The zoom level, shown for a moment after it changes. */
+export function ZoomHud() {
+  const zoom = useApp((s) => s.zoom);
+  const [shown, setShown] = useState(false);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    setShown(true);
+    const t = setTimeout(() => setShown(false), 1100);
+    return () => clearTimeout(t);
+  }, [zoom]);
+  if (!shown) return null;
+  return (
+    <div className="zoom-hud" role="status" aria-live="polite">
+      Zoom {Math.round(zoom * 100)}%
+    </div>
+  );
 }
 
 export function notifyDone(text: string) {
