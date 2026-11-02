@@ -5,4 +5,8 @@ export type Settings = {
 /**
  * dark | light | system
  */
-theme: string, editorFontSize: number, typeCheckOnSave: boolean, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };
+theme: string, editorFontSize: number, typeCheckOnSave: boolean, 
+/**
+ * Format with the project's Prettier (or the built-in formatter) on save.
+ */
+formatOnSave: boolean, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };

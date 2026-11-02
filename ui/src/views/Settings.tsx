@@ -62,6 +62,10 @@ export function SettingsView() {
           </label>
         </section>
         <label className="check">
+          <input type="checkbox" checked={settings.formatOnSave} onChange={(e) => void save({ formatOnSave: e.target.checked })} />
+          Format on save with the project's Prettier (TypeScript's formatter when it has none)
+        </label>
+        <label className="check">
           <input type="checkbox" checked={settings.typeCheckOnSave} onChange={(e) => void save({ typeCheckOnSave: e.target.checked })} />
           Type-check with the project's TypeScript after saving a .ts file
         </label>

@@ -96,6 +96,8 @@ interface State {
   lastPackageCommand: string | null;
   /** Latest versions from the registry, kept while the project is open. */
   latestVersions: LatestVersion[] | null;
+  /** The formatter the last format used, and its error if it failed (for the status bar). */
+  formatter: { name: string; version: string | null; error: string | null } | null;
 }
 
 export const useApp = create<State>(() => ({
@@ -131,6 +133,7 @@ export const useApp = create<State>(() => ({
   packagesRunning: null,
   lastPackageCommand: null,
   latestVersions: null,
+  formatter: null,
 }));
 
 const set = useApp.setState;
@@ -161,7 +164,7 @@ export async function openProject(path: string) {
   try {
     const model = await api.openProject(path);
     const settings = await api.getSettings();
-    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root), latestVersions: null, lastPackageCommand: null });
+    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root), latestVersions: null, lastPackageCommand: null, formatter: null });
     const main = model.files.find((f) => f.kind === 'main');
     const firstController = model.classes.find((c) => c.kind === 'controller');
     if (firstController) openFile(firstController.file, firstController.line);

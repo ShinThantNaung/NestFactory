@@ -3,6 +3,7 @@
 //! with a command name and JSON arguments; events go out through an [`EventSink`].
 
 pub mod debug;
+pub mod format;
 pub mod http;
 pub mod packages;
 pub mod process;
@@ -124,6 +125,7 @@ struct Inner {
     debug: Mutex<Option<debug::Session>>,
     /// A package manager command from the package view is running; one at a time.
     packages_busy: AtomicBool,
+    formatter: format::Formatter,
 }
 
 #[derive(Clone)]
@@ -165,6 +167,7 @@ impl Backend {
                 }),
                 debug: Mutex::new(None),
                 packages_busy: AtomicBool::new(false),
+                formatter: format::Formatter::default(),
             }),
         }
     }
@@ -178,6 +181,7 @@ impl Backend {
             s.stop();
         }
         self.inner.procs.kill_all();
+        self.inner.formatter.stop();
     }
 
     /// Runs a command. Errors are returned as display strings for the UI.
@@ -244,6 +248,7 @@ impl Backend {
                 st.redo.clear();
                 drop(st);
                 self.inner.procs.kill_all();
+                self.inner.formatter.stop();
                 val(true)
             }
             "rescan" => val(&*self.rescan()?),
@@ -319,6 +324,13 @@ impl Backend {
                 }
                 std::fs::rename(&from, &to).with_context(|| format!("renaming {from_rel} to {to_rel}"))?;
                 val(true)
+            }
+            "formatFile" => {
+                let rel: String = arg(a, "path")?;
+                let text: String = arg(a, "text")?;
+                let root = self.root()?;
+                self.path_in_root(&rel)?;
+                val(self.inner.formatter.format(&root, &rel, &text)?)
             }
             "revealPath" => {
                 let rel: String = arg(a, "path")?;
@@ -637,6 +649,7 @@ impl Backend {
             s.stop();
         }
         self.inner.procs.kill_all();
+        self.inner.formatter.stop();
         let generation;
         {
             let mut st = self.inner.state.lock().unwrap();

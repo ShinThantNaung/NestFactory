@@ -19,7 +19,7 @@ import {
   toast,
   type View,
 } from '../store';
-import { saveAll, saveFile, applyTheme } from '../monaco';
+import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
 import { startCreate } from '../explorer';
 import { basename, fuzzyScore, kindOf, KIND_LETTER } from '../util';
 
@@ -86,6 +86,17 @@ export function commands(): Command[] {
     { id: 'close', group: 'File', label: 'Close project', enabled: hasProject, run: () => void closeProject() },
     { id: 'undo', group: 'Edit', label: 'Undo last generation', kbd: 'Ctrl Z', enabled: hasProject, run: () => void undo() },
     { id: 'redo', group: 'Edit', label: 'Redo generation', kbd: 'Ctrl Y', enabled: hasProject, run: () => void redo() },
+    {
+      id: 'format',
+      group: 'Edit',
+      label: 'Format document',
+      kbd: 'Shift Alt F',
+      enabled: () => !!useApp.getState().active,
+      run: () => {
+        const m = monaco.editor.getModel(uriFor(useApp.getState().active!));
+        if (m) void formatBuffer(m);
+      },
+    },
     ...views.map(([v, label]) => ({ id: `view-${v}`, group: 'View', label, enabled: hasProject, run: () => setView(v) })),
     { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl `', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen })) },
     { id: 'theme', group: 'View', label: 'Switch light / dark theme', run: () => void toggleTheme() },
@@ -308,6 +319,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const problems = useApp((s) => s.problems.length);
   const view = useApp((s) => s.view);
   const lastPkg = useApp((s) => s.lastPackageCommand);
+  const formatter = useApp((s) => s.formatter);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -353,6 +365,16 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
       <span>
         Ln {cursor.line}, Col {cursor.col}
       </span>
+      {formatter && (
+        <button
+          title={formatter.error ? `${formatter.name} couldn't format the file:\n${formatter.error}` : `Formatter${formatter.version ? ` · Prettier ${formatter.version}` : ' · TypeScript'}`}
+          style={formatter.error ? { color: 'var(--warning)' } : undefined}
+          onClick={() => formatter.error && toast(`${formatter.name}: ${formatter.error.split('\n')[0]}`, 'error')}
+        >
+          <Icon name={formatter.error ? 'warning' : 'check'} size={13} />
+          {formatter.name}
+        </button>
+      )}
       <span>UTF-8 · LF</span>
     </footer>
   );

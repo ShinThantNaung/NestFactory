@@ -35,6 +35,7 @@ import type { CatalogEntry } from './bindings/CatalogEntry';
 import type { PackageAction } from './bindings/PackageAction';
 import type { PackagePlan } from './bindings/PackagePlan';
 import type { PackageDetails } from './bindings/PackageDetails';
+import type { FormatResult } from './bindings/FormatResult';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -164,6 +165,8 @@ export const api = {
   /** Moves a file or folder to the Recycle Bin. */
   deleteFile: (path: string) => call<boolean>('deleteFile', { path }),
   renameFile: (from: string, to: string) => call<boolean>('renameFile', { from, to }),
+  /** Formats `text` as `path` with the project's Prettier; `text: null` when it has none or skips the file. */
+  formatFile: (path: string, text: string) => call<FormatResult>('formatFile', { path, text }),
   /** Shows the file or folder selected in Explorer (Finder on macOS). */
   revealPath: (path: string) => call<boolean>('revealPath', { path }),
 
