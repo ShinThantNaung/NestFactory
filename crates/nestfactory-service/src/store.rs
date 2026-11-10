@@ -22,6 +22,8 @@ pub struct Settings {
     pub type_check_on_save: bool,
     /// Format with the project's Prettier (or the built-in formatter) on save.
     pub format_on_save: bool,
+    /// Add imports for names used but not imported on save (TypeScript's "Add all missing imports").
+    pub add_missing_imports_on_save: bool,
     /// The terminal profile new terminals open with (`pwsh`, `cmd`, `gitbash`…); empty for the first found.
     pub terminal_profile: String,
     pub default_package_manager: PackageManager,
@@ -37,6 +39,7 @@ impl Default for Settings {
             editor_font_size: 13,
             type_check_on_save: true,
             format_on_save: true,
+            add_missing_imports_on_save: true,
             terminal_profile: String::new(),
             default_package_manager: PackageManager::Npm,
             default_location: if home.is_empty() { String::new() } else { format!("{home}{}dev", std::path::MAIN_SEPARATOR) },

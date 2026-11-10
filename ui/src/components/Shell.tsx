@@ -23,6 +23,7 @@ import {
 } from '../store';
 import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
 import { startCreate } from '../explorer';
+import { addMissingImports, organizeImports, restart as restartTs } from '../intellisense';
 import { createTerminal } from '../terminal';
 import { zoomIn, zoomOut, resetZoom, zoomKey } from '../zoom';
 import { isTauri } from '../api';
@@ -67,6 +68,14 @@ export async function openProjectDialog() {
   if (p) await openProject(p);
 }
 
+/** The active editor's buffer when it's TypeScript or JavaScript served by the TypeScript server. */
+function activeCode() {
+  const s = useApp.getState();
+  if (!s.active || s.ts.status !== 'ready') return null;
+  const m = monaco.editor.getModel(uriFor(s.active));
+  return m && ['typescript', 'javascript'].includes(m.getLanguageId()) ? m : null;
+}
+
 export function commands(): Command[] {
   const s = useApp.getState();
   const script = s.runScript;
@@ -109,6 +118,22 @@ export function commands(): Command[] {
         if (m) void formatBuffer(m);
       },
     },
+    {
+      id: 'organizeImports',
+      group: 'Edit',
+      label: 'Organize imports',
+      kbd: 'Shift Alt O',
+      enabled: () => !!activeCode(),
+      run: () => void guard(organizeImports(activeCode()!)),
+    },
+    {
+      id: 'addMissingImports',
+      group: 'Edit',
+      label: 'Add all missing imports',
+      enabled: () => !!activeCode(),
+      run: () => void guard(addMissingImports(activeCode()!)).then((n) => n === 0 && toast('No missing imports')),
+    },
+    { id: 'restartTs', group: 'Edit', label: 'Restart TypeScript server', enabled: hasProject, run: () => void restartTs(true) },
     ...views.map(([v, label]) => ({ id: `view-${v}`, group: 'View', label, enabled: hasProject, run: () => setView(v) })),
     { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl J', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' })) },
     { id: 'terminal', group: 'View', label: 'Terminal', kbd: 'Ctrl `', enabled: hasProject, run: toggleTerminal },
@@ -377,6 +402,7 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const lastPkg = useApp((s) => s.lastPackageCommand);
   const formatter = useApp((s) => s.formatter);
   const zoom = useApp((s) => s.zoom);
+  const ts = useApp((s) => s.ts);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -416,9 +442,24 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
           {problems} type error{problems === 1 ? '' : 's'}
         </button>
       )}
-      <span style={{ marginLeft: 'auto' }}>
-        {model.nestVersion ? `NestJS ${model.nestVersion}` : 'NestJS'} · TypeScript
-      </span>
+      <span style={{ marginLeft: 'auto' }}>{model.nestVersion ? `NestJS ${model.nestVersion}` : 'NestJS'}</span>
+      <button
+        title={
+          ts.status === 'ready'
+            ? `IntelliSense from the project's TypeScript ${ts.version} (node_modules/typescript)`
+            : ts.status === 'error'
+              ? `Basic IntelliSense only: ${ts.error}
+Click to retry.`
+              : ts.status === 'starting'
+                ? 'Starting the TypeScript server…'
+                : 'TypeScript'
+        }
+        style={ts.status === 'error' ? { color: 'var(--warning)' } : undefined}
+        onClick={() => ts.status === 'error' && void restartTs(true)}
+      >
+        {ts.status === 'error' && <Icon name="warning" size={13} />}
+        {ts.status === 'ready' ? `TypeScript ${ts.version}` : ts.status === 'starting' ? 'TypeScript…' : 'TypeScript'}
+      </button>
       {zoom !== 1 && (
         <button title="Reset zoom (Ctrl 0)" onClick={resetZoom}>
           <Icon name="search" size={12} />

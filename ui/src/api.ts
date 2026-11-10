@@ -37,6 +37,7 @@ import type { PackagePlan } from './bindings/PackagePlan';
 import type { PackageDetails } from './bindings/PackageDetails';
 import type { FormatResult } from './bindings/FormatResult';
 import type { TerminalProfile } from './bindings/TerminalProfile';
+import type { TsServerInfo } from './bindings/TsServerInfo';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -168,6 +169,10 @@ export const api = {
   renameFile: (from: string, to: string) => call<boolean>('renameFile', { from, to }),
   /** Formats `text` as `path` with the project's Prettier; `text: null` when it has none or skips the file. */
   formatFile: (path: string, text: string) => call<FormatResult>('formatFile', { path, text }),
+  /** Starts (or finds) the project's TypeScript server, the source of IntelliSense. */
+  tsStart: () => call<TsServerInfo>('tsStart'),
+  /** One tsserver request; `sync` (updateOpen arguments) is applied first. */
+  tsRequest: <T>(command: string, args: unknown, sync: unknown = null, timeoutMs?: number) => call<T>('tsRequest', { command, args, sync, timeoutMs }),
   /** Shows the file or folder selected in Explorer (Finder on macOS). */
   revealPath: (path: string) => call<boolean>('revealPath', { path }),
 

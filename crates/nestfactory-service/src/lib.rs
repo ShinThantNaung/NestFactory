@@ -9,6 +9,7 @@ pub mod packages;
 pub mod process;
 pub mod pty;
 pub mod store;
+pub mod tsserver;
 
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -127,6 +128,7 @@ struct Inner {
     /// A package manager command from the package view is running; one at a time.
     packages_busy: AtomicBool,
     formatter: format::Formatter,
+    tsserver: tsserver::TsServer,
     terminals: pty::Terminals,
 }
 
@@ -171,6 +173,7 @@ impl Backend {
                 debug: Mutex::new(None),
                 packages_busy: AtomicBool::new(false),
                 formatter: format::Formatter::default(),
+                tsserver: tsserver::TsServer::default(),
                 terminals,
             }),
         }
@@ -186,6 +189,7 @@ impl Backend {
         }
         self.inner.procs.kill_all();
         self.inner.formatter.stop();
+        self.inner.tsserver.stop();
         self.inner.terminals.kill_all();
     }
 
@@ -254,6 +258,7 @@ impl Backend {
                 drop(st);
                 self.inner.procs.kill_all();
                 self.inner.formatter.stop();
+                self.inner.tsserver.stop();
                 self.inner.terminals.kill_all();
                 val(true)
             }
@@ -337,6 +342,15 @@ impl Backend {
                 let root = self.root()?;
                 self.path_in_root(&rel)?;
                 val(self.inner.formatter.format(&root, &rel, &text)?)
+            }
+            // ---- IntelliSense (the project's tsserver) ------------------------------------------------
+            "tsStart" => val(self.inner.tsserver.start(&self.root()?)?),
+            "tsRequest" => {
+                let command: String = arg(a, "command")?;
+                let args: Value = a.get("args").cloned().unwrap_or(Value::Null);
+                let sync: Option<Value> = a.get("sync").cloned();
+                let timeout = Duration::from_millis(opt_arg::<u64>(a, "timeoutMs").unwrap_or(30_000).clamp(1_000, 120_000));
+                self.inner.tsserver.request(&self.root()?, &command, args, sync, timeout)
             }
             "revealPath" => {
                 let rel: String = arg(a, "path")?;
@@ -674,6 +688,7 @@ impl Backend {
         }
         self.inner.procs.kill_all();
         self.inner.formatter.stop();
+        self.inner.tsserver.stop();
         self.inner.terminals.kill_all();
         let generation;
         {

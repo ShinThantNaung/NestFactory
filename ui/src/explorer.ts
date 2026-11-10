@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import { api } from './api';
 import { useApp, openFile, askConfirm, guard, toast, setLayout } from './store';
 import { renameBuffers, dropBuffers, isDirty } from './monaco';
+import { editsForRename, applyRenameEdits } from './intellisense';
 import { basename, dirname } from './util';
 
 export type EntryKind = 'file' | 'folder';
@@ -134,6 +135,8 @@ export async function finishRename(path: string, name: string) {
   const trimmed = name.trim().replace(/^\/+|\/+$/g, '');
   if (!trimmed || trimmed === basename(path)) return;
   const to = join(dirname(path), trimmed);
+  // Asked before the move, while TypeScript still sees the old path; applied after it.
+  const importEdits = /\.(m|c)?[jt]sx?$/.test(path) || !/\.[^/]+$/.test(path) ? await editsForRename(path, to) : [];
   const ok = await guard(api.renameFile(path, to));
   if (!ok) return;
   const sel = get().selected;
@@ -141,6 +144,7 @@ export async function finishRename(path: string, name: string) {
   const expanded = get().expanded;
   if (expanded[path]) set({ expanded: { ...expanded, [path]: false, [to]: true } });
   await renameBuffers(path, to);
+  if (importEdits.length) await applyRenameEdits(importEdits, path, to);
   refreshTree();
 }
 

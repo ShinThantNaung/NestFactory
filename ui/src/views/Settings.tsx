@@ -82,6 +82,10 @@ export function SettingsView() {
           Format on save with the project's Prettier (TypeScript's formatter when it has none)
         </label>
         <label className="check">
+          <input type="checkbox" checked={settings.addMissingImportsOnSave} onChange={(e) => void save({ addMissingImportsOnSave: e.target.checked })} />
+          Add missing imports on save (for names used in a file but not imported yet)
+        </label>
+        <label className="check">
           <input type="checkbox" checked={settings.typeCheckOnSave} onChange={(e) => void save({ typeCheckOnSave: e.target.checked })} />
           Type-check with the project's TypeScript after saving a .ts file
         </label>

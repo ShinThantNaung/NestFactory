@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, on, launchProject } from './api';
 import { useApp, appendLog, openProject, openFile, toast } from './store';
 import { applyTheme, reloadFromDisk } from './monaco';
+import './intellisense';
 import { TitleBar, ToolRail, StatusBar, Toasts, CommandPalette, ConfirmDialog, ZoomHud, useGlobalKeys } from './components/Shell';
 import { restoreZoom } from './zoom';
 import { Workspace } from './components/Workspace';

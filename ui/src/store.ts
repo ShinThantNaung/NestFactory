@@ -129,6 +129,8 @@ interface State {
   formatter: { name: string; version: string | null; error: string | null } | null;
   /** Window zoom factor (1 = 100%). */
   zoom: number;
+  /** The project's TypeScript server (IntelliSense): starting, ready, or failed (the editor's built-in TypeScript then). */
+  ts: { status: 'off' | 'starting' | 'ready' | 'error'; version: string | null; error: string | null };
 }
 
 export const useApp = create<State>(() => ({
@@ -169,6 +171,7 @@ export const useApp = create<State>(() => ({
   latestVersions: null,
   formatter: null,
   zoom: 1,
+  ts: { status: 'off', version: null, error: null },
 }));
 
 const set = useApp.setState;

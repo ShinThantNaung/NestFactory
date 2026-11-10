@@ -164,12 +164,38 @@ export function getModel(path: string): Promise<monaco.editor.ITextModel> {
     if (again) return again;
     const m = monaco.editor.createModel(content, languageFor(path), uriFor(path));
     saved.set(path, m.getAlternativeVersionId());
-    m.onDidChangeContent(() => setDirty(path, m.getAlternativeVersionId() !== saved.get(path)));
+    m.onDidChangeContent(() => {
+      const dirty = m.getAlternativeVersionId() !== saved.get(path);
+      setDirty(path, dirty);
+      // A file without a tab can only change through a refactoring (rename, quick fix, updated
+      // imports); like VS Code's files.refactoring.autoSave, it's saved rather than left dirty.
+      if (dirty && !useApp.getState().tabs.some((t) => t.path === path)) scheduleBackgroundSave(path);
+    });
     return m;
   });
   loading.set(path, p);
   p.finally(() => loading.delete(path));
   return p;
+}
+
+const backgroundSaves = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleBackgroundSave(path: string) {
+  clearTimeout(backgroundSaves.get(path));
+  backgroundSaves.set(
+    path,
+    setTimeout(async () => {
+      backgroundSaves.delete(path);
+      const m = monaco.editor.getModel(uriFor(path));
+      if (!m || m.isDisposed() || !isDirty(path) || useApp.getState().tabs.some((t) => t.path === path)) return;
+      const version = m.getAlternativeVersionId();
+      try {
+        await api.writeFile(path, m.getValue());
+        saved.set(path, version);
+      } catch (e) {
+        toast(errorText(e), 'error');
+      }
+    }, 300),
+  );
 }
 
 export function isDirty(path: string) {
@@ -356,9 +382,19 @@ export async function formatBuffer(model: monaco.editor.ITextModel) {
   if (edits.length) model.pushEditOperations([], edits, () => null);
 }
 
+/** Steps that run on save before formatting (e.g. adding missing imports); failures don't stop the save. */
+export const saveParticipants: ((model: monaco.editor.ITextModel) => Promise<void>)[] = [];
+
 export async function saveFile(path: string) {
   const m = monaco.editor.getModel(uriFor(path));
   if (!m) return;
+  for (const p of saveParticipants) {
+    try {
+      await p(m);
+    } catch {
+      // Saving matters more than the extra step.
+    }
+  }
   if (useApp.getState().settings?.formatOnSave) await formatBuffer(m);
   try {
     await api.writeFile(path, m.getValue());
@@ -477,6 +513,8 @@ monaco.languages.registerCodeLensProvider('typescript', {
 
 monaco.languages.registerDefinitionProvider('typescript', {
   provideDefinition(textModel, position) {
+    // The TypeScript server knows every definition; this is the fallback without it.
+    if (useApp.getState().ts.status === 'ready') return null;
     const word = textModel.getWordAtPosition(position)?.word;
     const m = model();
     if (!word || !m) return null;
@@ -511,10 +549,12 @@ monaco.editor.registerEditorOpener({
   },
 });
 
-/** Graph diagnostics and tsc problems as editor markers. */
+/** Graph diagnostics and tsc problems as editor markers. With the TypeScript server running, its live
+ *  diagnostics replace the tsc ones (which describe the files as last saved). */
 export function updateMarkers() {
   const s = useApp.getState();
   const m = s.model;
+  const live = s.ts.status === 'ready';
   for (const tm of monaco.editor.getModels()) {
     const path = pathForUri(tm.uri);
     if (!path) continue;
@@ -533,7 +573,7 @@ export function updateMarkers() {
       });
     }
     for (const p of s.problems) {
-      if (p.file !== path) continue;
+      if (live || p.file !== path) continue;
       markers.push({
         severity: p.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
         message: p.message,
@@ -550,5 +590,5 @@ export function updateMarkers() {
 }
 
 useApp.subscribe((s, prev) => {
-  if (s.model !== prev.model || s.problems !== prev.problems) updateMarkers();
+  if (s.model !== prev.model || s.problems !== prev.problems || s.ts.status !== prev.ts.status) updateMarkers();
 });

@@ -11,6 +11,10 @@ theme: string, editorFontSize: number, typeCheckOnSave: boolean,
  */
 formatOnSave: boolean, 
 /**
+ * Add imports for names used but not imported on save (TypeScript's "Add all missing imports").
+ */
+addMissingImportsOnSave: boolean, 
+/**
  * The terminal profile new terminals open with (`pwsh`, `cmd`, `gitbash`…); empty for the first found.
  */
 terminalProfile: string, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };
