@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, pickFolder, windowAction } from '../api';
-import { Icon, Logo, Play, StopSquare } from '../icons';
+import { Icon, LayoutIcon, Logo, Play, StopSquare } from '../icons';
 import {
   useApp,
   openProject,
@@ -17,9 +17,16 @@ import {
   setView,
   guard,
   toast,
+  toggleSidebar,
+  toggleInspector,
   type View,
 } from '../store';
-import { saveAll, saveFile, applyTheme } from '../monaco';
+import { saveAll, saveFile, applyTheme, formatBuffer, monaco, uriFor } from '../monaco';
+import { startCreate } from '../explorer';
+import { addMissingImports, organizeImports, restart as restartTs } from '../intellisense';
+import { createTerminal } from '../terminal';
+import { zoomIn, zoomOut, resetZoom, zoomKey } from '../zoom';
+import { isTauri } from '../api';
 import { basename, fuzzyScore, kindOf, KIND_LETTER } from '../util';
 
 // ---- commands shared by menus and the palette ------------------------------------------------
@@ -49,9 +56,24 @@ export function openGenerator(directory: string | null = null, module: string | 
   useApp.setState({ generator: { schematic, directory: dir, module: mod }, view: 'generate' });
 }
 
+/** Ctrl `: shows the terminal (starting one if none), or hides the panel when it's showing. */
+export function toggleTerminal() {
+  const s = useApp.getState();
+  if (s.panelOpen && s.panelTab === 'terminal' && s.view === 'explorer') useApp.setState({ panelOpen: false });
+  else useApp.setState({ panelOpen: true, panelTab: 'terminal', view: 'explorer' });
+}
+
 export async function openProjectDialog() {
   const p = await pickFolder('Open a Nest project');
   if (p) await openProject(p);
+}
+
+/** The active editor's buffer when it's TypeScript or JavaScript served by the TypeScript server. */
+function activeCode() {
+  const s = useApp.getState();
+  if (!s.active || s.ts.status !== 'ready') return null;
+  const m = monaco.editor.getModel(uriFor(s.active));
+  return m && ['typescript', 'javascript'].includes(m.getLanguageId()) ? m : null;
 }
 
 export function commands(): Command[] {
@@ -69,6 +91,7 @@ export function commands(): Command[] {
     ['explorer', 'Explorer'],
     ['graph', 'Module graph'],
     ['database', 'Database connections'],
+    ['packages', 'Packages'],
     ['api', 'API explorer'],
     ['tests', 'Tests'],
     ['env', 'Environment'],
@@ -77,13 +100,49 @@ export function commands(): Command[] {
   return [
     { id: 'new', group: 'File', label: 'New project…', run: () => useApp.setState({ screen: 'wizard' }) },
     { id: 'open', group: 'File', label: 'Open project…', kbd: 'Ctrl O', run: () => void openProjectDialog() },
+    { id: 'newFile', group: 'File', label: 'New file…', kbd: 'Ctrl N', enabled: hasProject, run: () => startCreate('file') },
+    { id: 'newFolder', group: 'File', label: 'New folder…', enabled: hasProject, run: () => startCreate('folder') },
     { id: 'save', group: 'File', label: 'Save', kbd: 'Ctrl S', enabled: () => !!useApp.getState().active, run: () => void saveFile(useApp.getState().active!) },
     { id: 'saveAll', group: 'File', label: 'Save all', kbd: 'Ctrl Shift S', enabled: hasProject, run: () => void saveAll() },
     { id: 'close', group: 'File', label: 'Close project', enabled: hasProject, run: () => void closeProject() },
     { id: 'undo', group: 'Edit', label: 'Undo last generation', kbd: 'Ctrl Z', enabled: hasProject, run: () => void undo() },
     { id: 'redo', group: 'Edit', label: 'Redo generation', kbd: 'Ctrl Y', enabled: hasProject, run: () => void redo() },
+    {
+      id: 'format',
+      group: 'Edit',
+      label: 'Format document',
+      kbd: 'Shift Alt F',
+      enabled: () => !!useApp.getState().active,
+      run: () => {
+        const m = monaco.editor.getModel(uriFor(useApp.getState().active!));
+        if (m) void formatBuffer(m);
+      },
+    },
+    {
+      id: 'organizeImports',
+      group: 'Edit',
+      label: 'Organize imports',
+      kbd: 'Shift Alt O',
+      enabled: () => !!activeCode(),
+      run: () => void guard(organizeImports(activeCode()!)),
+    },
+    {
+      id: 'addMissingImports',
+      group: 'Edit',
+      label: 'Add all missing imports',
+      enabled: () => !!activeCode(),
+      run: () => void guard(addMissingImports(activeCode()!)).then((n) => n === 0 && toast('No missing imports')),
+    },
+    { id: 'restartTs', group: 'Edit', label: 'Restart TypeScript server', enabled: hasProject, run: () => void restartTs(true) },
     ...views.map(([v, label]) => ({ id: `view-${v}`, group: 'View', label, enabled: hasProject, run: () => setView(v) })),
-    { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl `', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen })) },
+    { id: 'panel', group: 'View', label: 'Toggle bottom panel', kbd: 'Ctrl J', enabled: hasProject, run: () => useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' })) },
+    { id: 'terminal', group: 'View', label: 'Terminal', kbd: 'Ctrl `', enabled: hasProject, run: toggleTerminal },
+    { id: 'newTerminal', group: 'View', label: 'New terminal', kbd: 'Ctrl Shift `', enabled: hasProject, run: () => void createTerminal() },
+    { id: 'sidebar', group: 'View', label: 'Show / hide explorer', kbd: 'Ctrl B', enabled: hasProject, run: toggleSidebar },
+    { id: 'inspector', group: 'View', label: 'Show / hide inspector', kbd: 'Ctrl Alt B', enabled: hasProject, run: toggleInspector },
+    { id: 'zoomIn', group: 'View', label: 'Zoom in', kbd: 'Ctrl +', run: zoomIn },
+    { id: 'zoomOut', group: 'View', label: 'Zoom out', kbd: 'Ctrl -', run: zoomOut },
+    { id: 'zoomReset', group: 'View', label: 'Reset zoom', kbd: 'Ctrl 0', enabled: () => useApp.getState().zoom !== 1, run: resetZoom },
     { id: 'theme', group: 'View', label: 'Switch light / dark theme', run: () => void toggleTheme() },
     { id: 'generate', group: 'Nest', label: 'Generate…', kbd: 'Ctrl Alt G', enabled: hasProject, run: () => openGenerator() },
     { id: 'gen-resource', group: 'Nest', label: 'Generate resource (CRUD)', enabled: hasProject, run: () => openGenerator(null, null, 'resource') },
@@ -161,6 +220,29 @@ function Menus() {
         </div>
       ))}
     </nav>
+  );
+}
+
+/** Title-bar switches for the explorer, the bottom panel and the inspector, as in VS Code. */
+function LayoutToggles() {
+  const layout = useApp((s) => s.layout);
+  const panel = useApp((s) => s.panelOpen);
+  const show = (fn: () => void) => () => {
+    if (useApp.getState().view !== 'explorer') setView('explorer');
+    fn();
+  };
+  return (
+    <div className="layout-toggles" role="group" aria-label="Layout">
+      <button className="icon-btn" aria-pressed={!layout.sideHidden} title="Show / hide explorer (Ctrl B)" aria-label="Explorer" onClick={show(toggleSidebar)}>
+        <LayoutIcon part="left" on={!layout.sideHidden} />
+      </button>
+      <button className="icon-btn" aria-pressed={panel} title="Show / hide panel (Ctrl J)" aria-label="Panel" onClick={show(() => useApp.setState((x) => ({ panelOpen: !x.panelOpen })))}>
+        <LayoutIcon part="bottom" on={panel} />
+      </button>
+      <button className="icon-btn" aria-pressed={!layout.inspectorHidden} title="Show / hide inspector (Ctrl Alt B)" aria-label="Inspector" onClick={show(toggleInspector)}>
+        <LayoutIcon part="right" on={!layout.inspectorHidden} />
+      </button>
+    </div>
   );
 }
 
@@ -249,6 +331,7 @@ export function TitleBar() {
         {debugging && <DebugToolbar />}
       </div>
       {!debugging && <RunControls />}
+      {model && screen === 'project' && <LayoutToggles />}
       <div className="window-buttons">
         <button aria-label="Minimize" onClick={() => void windowAction('minimize')}>
           <Icon name="minimize" size={14} />
@@ -273,6 +356,7 @@ export function ToolRail() {
     ['graph', 'graph', 'Module graph'],
     ['generate', 'generate', 'Generate'],
     ['database', 'database', 'Database'],
+    ['packages', 'package', 'Packages'],
     ['api', 'api', 'API explorer'],
     ['tests', 'tests', 'Tests'],
     ['env', 'env', 'Environment'],
@@ -280,7 +364,20 @@ export function ToolRail() {
   return (
     <nav className="rail" aria-label="Tools">
       {items.map(([v, icon, label]) => (
-        <button key={v} aria-label={label} title={label} aria-current={view === v} onClick={() => (v === 'generate' && !useApp.getState().generator ? openGenerator() : setView(v))}>
+        <button
+          key={v}
+          aria-label={label}
+          title={v === 'explorer' ? 'Explorer (click again to hide or show it · Ctrl B)' : label}
+          aria-current={view === v}
+          onClick={() => {
+            if (v === 'explorer' && view === 'explorer') toggleSidebar();
+            else if (v === 'explorer') {
+              setView(v);
+              if (useApp.getState().layout.sideHidden) toggleSidebar();
+            } else if (v === 'generate' && !useApp.getState().generator) openGenerator();
+            else setView(v);
+          }}
+        >
           <Icon name={icon} />
           {v === 'graph' && issues > 0 && <span className="badge-dot" />}
         </button>
@@ -302,6 +399,10 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
   const debug = useApp((s) => s.debug);
   const problems = useApp((s) => s.problems.length);
   const view = useApp((s) => s.view);
+  const lastPkg = useApp((s) => s.lastPackageCommand);
+  const formatter = useApp((s) => s.formatter);
+  const zoom = useApp((s) => s.zoom);
+  const ts = useApp((s) => s.ts);
   if (!model) return null;
   const issues = model.diagnostics.filter((d) => d.severity !== 'info').length;
   const debugging = !['idle', 'ended'].includes(debug.state);
@@ -320,6 +421,11 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
       )}
       {model.gitBranch && <span>{model.gitBranch}</span>}
       {view === 'generate' && <span>Nest CLI schematics · @nestjs/schematics</span>}
+      {lastPkg && (
+        <button className="mono" title={lastPkg} style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis' }} onClick={() => setView('packages')}>
+          Last: {lastPkg}
+        </button>
+      )}
       {dbLabel && (
         <button onClick={() => setView('database')}>
           <span className="dot ok" />
@@ -336,12 +442,43 @@ export function StatusBar({ dbLabel }: { dbLabel: string | null }) {
           {problems} type error{problems === 1 ? '' : 's'}
         </button>
       )}
-      <span style={{ marginLeft: 'auto' }}>
-        {model.nestVersion ? `NestJS ${model.nestVersion}` : 'NestJS'} · TypeScript
-      </span>
+      <span style={{ marginLeft: 'auto' }}>{model.nestVersion ? `NestJS ${model.nestVersion}` : 'NestJS'}</span>
+      <button
+        title={
+          ts.status === 'ready'
+            ? `IntelliSense from the project's TypeScript ${ts.version} (node_modules/typescript)`
+            : ts.status === 'error'
+              ? `Basic IntelliSense only: ${ts.error}
+Click to retry.`
+              : ts.status === 'starting'
+                ? 'Starting the TypeScript server…'
+                : 'TypeScript'
+        }
+        style={ts.status === 'error' ? { color: 'var(--warning)' } : undefined}
+        onClick={() => ts.status === 'error' && void restartTs(true)}
+      >
+        {ts.status === 'error' && <Icon name="warning" size={13} />}
+        {ts.status === 'ready' ? `TypeScript ${ts.version}` : ts.status === 'starting' ? 'TypeScript…' : 'TypeScript'}
+      </button>
+      {zoom !== 1 && (
+        <button title="Reset zoom (Ctrl 0)" onClick={resetZoom}>
+          <Icon name="search" size={12} />
+          {Math.round(zoom * 100)}%
+        </button>
+      )}
       <span>
         Ln {cursor.line}, Col {cursor.col}
       </span>
+      {formatter && (
+        <button
+          title={formatter.error ? `${formatter.name} couldn't format the file:\n${formatter.error}` : `Formatter${formatter.version ? ` · Prettier ${formatter.version}` : ' · TypeScript'}`}
+          style={formatter.error ? { color: 'var(--warning)' } : undefined}
+          onClick={() => formatter.error && toast(`${formatter.name}: ${formatter.error.split('\n')[0]}`, 'error')}
+        >
+          <Icon name={formatter.error ? 'warning' : 'check'} size={13} />
+          {formatter.name}
+        </button>
+      )}
       <span>UTF-8 · LF</span>
     </footer>
   );
@@ -381,6 +518,7 @@ export interface MenuItem {
   run?: () => void;
   separator?: boolean;
   disabled?: boolean;
+  kbd?: string;
 }
 
 export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
@@ -397,9 +535,10 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
       window.removeEventListener('keydown', esc);
     };
   }, [onClose]);
-  const top = Math.min(y, window.innerHeight - items.length * 31 - 20);
+  const top = Math.max(8, Math.min(y, window.innerHeight - items.length * 31 - 20));
+  const left = Math.min(x, window.innerWidth - 260);
   return (
-    <div className="context-menu" ref={ref} style={{ left: x, top }}>
+    <div className="context-menu" ref={ref} style={{ left, top }}>
       <div className="menu" role="menu">
         {items.map((it, i) =>
           it.separator ? (
@@ -415,9 +554,49 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
               }}
             >
               {it.label}
+              {it.kbd && <span className="kbd mono">{it.kbd}</span>}
             </button>
           ),
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---- confirm dialog ----------------------------------------------------------------------------------
+export function ConfirmDialog() {
+  const c = useApp((s) => s.confirm);
+  const okRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (c) setTimeout(() => okRef.current?.focus(), 0);
+  }, [c]);
+  if (!c) return null;
+  const done = (ok: boolean) => {
+    useApp.setState({ confirm: null });
+    c.resolve(ok);
+  };
+  return (
+    <div className="overlay" style={{ zIndex: 70 }} onMouseDown={(e) => e.target === e.currentTarget && done(false)} onKeyDown={(e) => e.key === 'Escape' && done(false)}>
+      <div className="dialog small confirm" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+        <div className="dialog-head">
+          {c.danger && (
+            <span className="icon-tile">
+              <Icon name="trash" size={16} />
+            </span>
+          )}
+          <h2 id="confirm-title">{c.title}</h2>
+        </div>
+        <p id="confirm-body" className="muted">
+          {c.message}
+        </p>
+        <div className="dialog-foot">
+          <button className="btn lg" style={{ marginLeft: 'auto' }} onClick={() => done(false)}>
+            Cancel
+          </button>
+          <button ref={okRef} className={`btn lg ${c.danger ? 'danger' : 'primary'}`} onClick={() => done(true)}>
+            {c.confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -548,6 +727,9 @@ export function useGlobalKeys() {
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (s.model) useApp.setState({ palette: 'files' });
+      } else if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (s.model) startCreate('file');
       } else if (ctrl && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         void openProjectDialog();
@@ -557,9 +739,20 @@ export function useGlobalKeys() {
       } else if (ctrl && e.altKey && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         openGenerator();
-      } else if (ctrl && e.key === '`') {
+      } else if (ctrl && e.code === 'Backquote') {
         e.preventDefault();
-        useApp.setState((x) => ({ panelOpen: !x.panelOpen }));
+        if (!s.model) return;
+        if (e.shiftKey) void createTerminal();
+        else toggleTerminal();
+      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        if (!s.model) return;
+        if (s.view !== 'explorer') useApp.setState({ view: 'explorer' });
+        if (e.altKey) toggleInspector();
+        else toggleSidebar();
+      } else if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        if (s.model) useApp.setState((x) => ({ panelOpen: !x.panelOpen, view: 'explorer' }));
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z' && !inInput && s.model && !s.preview) {
         e.preventDefault();
         void undo();
@@ -583,9 +776,43 @@ export function useGlobalKeys() {
         useApp.setState({ palette: null });
       }
     };
+    // Zoom runs in the capture phase, before the editor or a terminal can take the keys.
+    const onZoomKey = (e: KeyboardEvent) => {
+      const act = isTauri ? zoomKey(e) : null;
+      if (!act) return;
+      e.preventDefault();
+      e.stopPropagation();
+      act();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onZoomKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onZoomKey, true);
+    };
   }, []);
+}
+
+/** The zoom level, shown for a moment after it changes. */
+export function ZoomHud() {
+  const zoom = useApp((s) => s.zoom);
+  const [shown, setShown] = useState(false);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    setShown(true);
+    const t = setTimeout(() => setShown(false), 1100);
+    return () => clearTimeout(t);
+  }, [zoom]);
+  if (!shown) return null;
+  return (
+    <div className="zoom-hud" role="status" aria-live="polite">
+      Zoom {Math.round(zoom * 100)}%
+    </div>
+  );
 }
 
 export function notifyDone(text: string) {

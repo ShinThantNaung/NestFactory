@@ -4,10 +4,16 @@ import { useApp, guard, toast } from '../store';
 import { applyTheme } from '../monaco';
 import type { Settings } from '../bindings/Settings';
 import type { Toolchain } from '../bindings/Toolchain';
+import type { TerminalProfile } from '../bindings/TerminalProfile';
+import { terminalProfiles } from '../terminal';
 
 export function SettingsView() {
   const settings = useApp((s) => s.settings);
   const [tc, setTc] = useState<Toolchain | null>(useApp.getState().toolchain);
+  const [shells, setShells] = useState<TerminalProfile[]>([]);
+  useEffect(() => {
+    terminalProfiles().then(setShells, () => {});
+  }, []);
   useEffect(() => {
     api.toolchain().then((t) => {
       setTc(t);
@@ -57,10 +63,28 @@ export function SettingsView() {
             </select>
           </label>
           <label className="field">
+            <span>Default terminal</span>
+            <select className="input" value={settings.terminalProfile || shells[0]?.id || ''} onChange={(e) => void save({ terminalProfile: e.target.value })}>
+              {shells.map((p) => (
+                <option key={p.id} value={p.id} title={p.program}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
             <span>New projects go in</span>
             <input className="input mono" value={settings.defaultLocation} onChange={(e) => useApp.setState({ settings: { ...settings, defaultLocation: e.target.value } })} onBlur={() => void save({})} />
           </label>
         </section>
+        <label className="check">
+          <input type="checkbox" checked={settings.formatOnSave} onChange={(e) => void save({ formatOnSave: e.target.checked })} />
+          Format on save with the project's Prettier (TypeScript's formatter when it has none)
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={settings.addMissingImportsOnSave} onChange={(e) => void save({ addMissingImportsOnSave: e.target.checked })} />
+          Add missing imports on save (for names used in a file but not imported yet)
+        </label>
         <label className="check">
           <input type="checkbox" checked={settings.typeCheckOnSave} onChange={(e) => void save({ typeCheckOnSave: e.target.checked })} />
           Type-check with the project's TypeScript after saving a .ts file
@@ -90,7 +114,7 @@ export function SettingsView() {
         <section className="col" style={{ gap: 8 }}>
           <span className="caps">About</span>
           <span className="muted">NestFactory 0.1.0 · Rust core, Tauri shell, Monaco editor.</span>
-          <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => toast('Shortcuts: Ctrl K commands · Ctrl P files · Ctrl Alt G generate · Ctrl Z undo generation · F5 debug · F9 breakpoint · Ctrl ` panel')}>
+          <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => toast('Shortcuts: Ctrl K commands · Ctrl P files · Ctrl N new file · F2 rename · Del delete · Ctrl S save and format · Shift Alt F format · Ctrl ` terminal · Ctrl Shift ` new terminal · Ctrl J panel · Ctrl B explorer · Ctrl Alt B inspector · Ctrl + / Ctrl - / Ctrl 0 zoom · Ctrl Alt G generate · F5 debug · F9 breakpoint')}>
             Keyboard shortcuts
           </button>
         </section>

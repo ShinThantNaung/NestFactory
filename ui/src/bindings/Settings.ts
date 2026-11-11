@@ -5,4 +5,16 @@ export type Settings = {
 /**
  * dark | light | system
  */
-theme: string, editorFontSize: number, typeCheckOnSave: boolean, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };
+theme: string, editorFontSize: number, typeCheckOnSave: boolean, 
+/**
+ * Format with the project's Prettier (or the built-in formatter) on save.
+ */
+formatOnSave: boolean, 
+/**
+ * Add imports for names used but not imported on save (TypeScript's "Add all missing imports").
+ */
+addMissingImportsOnSave: boolean, 
+/**
+ * The terminal profile new terminals open with (`pwsh`, `cmd`, `gitbash`…); empty for the first found.
+ */
+terminalProfile: string, defaultPackageManager: PackageManager, defaultLocation: string, recentProjects: Array<string>, };

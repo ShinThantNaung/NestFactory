@@ -11,4 +11,12 @@ companions: Array<string>, devCompanions: Array<string>,
 /**
  * Already in package.json.
  */
-installed: boolean, docs: string, };
+installed: boolean, docs: string, 
+/**
+ * Published under `@nestjs`.
+ */
+official: boolean, 
+/**
+ * How to set it up when NestFactory has no wiring for it.
+ */
+hint: string | null, };

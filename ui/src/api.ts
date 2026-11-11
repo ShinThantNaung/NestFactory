@@ -34,6 +34,10 @@ import type { SearchHit } from './bindings/SearchHit';
 import type { CatalogEntry } from './bindings/CatalogEntry';
 import type { PackageAction } from './bindings/PackageAction';
 import type { PackagePlan } from './bindings/PackagePlan';
+import type { PackageDetails } from './bindings/PackageDetails';
+import type { FormatResult } from './bindings/FormatResult';
+import type { TerminalProfile } from './bindings/TerminalProfile';
+import type { TsServerInfo } from './bindings/TsServerInfo';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -157,8 +161,20 @@ export const api = {
   listFiles: () => call<string[]>('listFiles'),
   readFile: (path: string) => call<{ content: string }>('readFile', { path }).then((r) => r.content),
   writeFile: (path: string, content: string) => call<boolean>('writeFile', { path, content }),
+  /** Creates an empty file (and missing parent folders); fails if it exists. */
+  createFile: (path: string) => call<boolean>('createFile', { path }),
+  createDir: (path: string) => call<boolean>('createDir', { path }),
+  /** Moves a file or folder to the Recycle Bin. */
   deleteFile: (path: string) => call<boolean>('deleteFile', { path }),
   renameFile: (from: string, to: string) => call<boolean>('renameFile', { from, to }),
+  /** Formats `text` as `path` with the project's Prettier; `text: null` when it has none or skips the file. */
+  formatFile: (path: string, text: string) => call<FormatResult>('formatFile', { path, text }),
+  /** Starts (or finds) the project's TypeScript server, the source of IntelliSense. */
+  tsStart: () => call<TsServerInfo>('tsStart'),
+  /** One tsserver request; `sync` (updateOpen arguments) is applied first. */
+  tsRequest: <T>(command: string, args: unknown, sync: unknown = null, timeoutMs?: number) => call<T>('tsRequest', { command, args, sync, timeoutMs }),
+  /** Shows the file or folder selected in Explorer (Finder on macOS). */
+  revealPath: (path: string) => call<boolean>('revealPath', { path }),
 
   previewGenerate: (options: GenerateOptions) => call<Changeset>('previewGenerate', { options }),
   previewFix: (action: FixAction) => call<Changeset>('previewFix', { action }),
@@ -185,7 +201,13 @@ export const api = {
   runScript: (script: string) => call<number>('runScript', { script }),
   stopProcess: (id: string) => call<boolean>('stopProcess', { id }),
   processes: () => call<string[]>('processes'),
-  runCommand: (line: string) => call<number>('runCommand', { line }),
+  /** Shells for the terminal panel (PowerShell, Command Prompt, Git Bash, WSL, Node.js…), the default first. */
+  terminalProfiles: () => call<TerminalProfile[]>('terminalProfiles'),
+  /** Starts a shell as terminal `id`; output streams as `pty-output`, then `pty-exit`. */
+  ptySpawn: (id: string, profile: string | null, cols: number, rows: number) => call<TerminalProfile>('ptySpawn', { id, profile, cols, rows }),
+  ptyWrite: (id: string, data: string) => call<boolean>('ptyWrite', { id, data }),
+  ptyResize: (id: string, cols: number, rows: number) => call<boolean>('ptyResize', { id, cols, rows }),
+  ptyKill: (id: string) => call<boolean>('ptyKill', { id }),
   runTests: (opts: { e2e?: boolean; file?: string | null; name?: string | null; coverage?: boolean }) => call<TestRun>('runTests', opts),
   typecheck: () => call<Problem[]>('typecheck'),
 
@@ -196,9 +218,17 @@ export const api = {
   pkgCatalog: () => call<CatalogEntry[]>('pkgCatalog'),
   /** Resolves versions for the project's Nest and finds missing peers; writes nothing. */
   pkgPlan: (action: PackageAction, packages: string[], dev = false) => call<PackagePlan>('pkgPlan', { action, packages, dev }),
-  /** Starts the command in the background and returns it. Output streams as process `packages`;
+  /** Registry details, compatibility checks and wiring steps for one package. */
+  pkgDetails: (name: string) => call<PackageDetails>('pkgDetails', { name }),
+  /** The command lines a run would use; no network. */
+  pkgCommand: (action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) => call<string[]>('pkgCommand', { action, packages, dev, devPackages }),
+  /** Starts the commands in the background and returns them. Output streams as process `packages`;
    * `task-done` with id `packages` follows, then `project-updated`. */
-  pkgRun: (action: PackageAction, packages: string[], dev = false) => call<string>('pkgRun', { action, packages, dev }),
+  pkgRun: (action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) => call<string[]>('pkgRun', { action, packages, dev, devPackages }),
+  /** A changeset wiring the package into the root module (steps: `module`, `example`). */
+  pkgWire: (name: string, steps: string[]) => call<Changeset>('pkgWire', { name, steps }),
+  /** A changeset taking the package's wiring out, or null when there is none. */
+  pkgUnwire: (name: string) => call<Changeset | null>('pkgUnwire', { name }),
 
   envReport: () => call<EnvReport>('envReport'),
   envSave: (file: string, updates: [string, string | null][]) => call<EnvReport>('envSave', { file, updates }),

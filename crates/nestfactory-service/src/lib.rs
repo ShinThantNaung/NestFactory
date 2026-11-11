@@ -3,10 +3,13 @@
 //! with a command name and JSON arguments; events go out through an [`EventSink`].
 
 pub mod debug;
+pub mod format;
 pub mod http;
 pub mod packages;
 pub mod process;
+pub mod pty;
 pub mod store;
+pub mod tsserver;
 
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -28,6 +31,7 @@ use nestfactory_core::pm::PackageAction;
 use nestfactory_core::project::read_meta;
 use nestfactory_core::testing::{self, Problem, TestRun};
 use nestfactory_core::wizard::{self, PlannedFile, WizardOptions, WizardStep};
+use nestfactory_core::wiring;
 use nestfactory_core::{pm, Scanner};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
@@ -35,7 +39,7 @@ use serde_json::{json, Value};
 use ts_rs::TS;
 
 use crate::http::{ApiRequest, Endpoint, HistoryEntry};
-use crate::process::{command, resolve_program, shell_command, ProcessManager};
+use crate::process::{command, resolve_program, ProcessManager};
 use crate::store::{DbProfile, Settings, Store};
 
 pub trait EventSink: Send + Sync + 'static {
@@ -123,6 +127,9 @@ struct Inner {
     debug: Mutex<Option<debug::Session>>,
     /// A package manager command from the package view is running; one at a time.
     packages_busy: AtomicBool,
+    formatter: format::Formatter,
+    tsserver: tsserver::TsServer,
+    terminals: pty::Terminals,
 }
 
 #[derive(Clone)]
@@ -147,6 +154,7 @@ const IGNORED_DIRS: &[&str] = &["node_modules", "dist", "coverage", ".git", "bui
 impl Backend {
     pub fn new(data_dir: PathBuf, sink: Arc<dyn EventSink>) -> Self {
         let procs = Arc::new(ProcessManager::new(sink.clone()));
+        let terminals = pty::Terminals::new(sink.clone());
         Backend {
             inner: Arc::new(Inner {
                 sink,
@@ -164,6 +172,9 @@ impl Backend {
                 }),
                 debug: Mutex::new(None),
                 packages_busy: AtomicBool::new(false),
+                formatter: format::Formatter::default(),
+                tsserver: tsserver::TsServer::default(),
+                terminals,
             }),
         }
     }
@@ -177,6 +188,9 @@ impl Backend {
             s.stop();
         }
         self.inner.procs.kill_all();
+        self.inner.formatter.stop();
+        self.inner.tsserver.stop();
+        self.inner.terminals.kill_all();
     }
 
     /// Runs a command. Errors are returned as display strings for the UI.
@@ -243,6 +257,9 @@ impl Backend {
                 st.redo.clear();
                 drop(st);
                 self.inner.procs.kill_all();
+                self.inner.formatter.stop();
+                self.inner.tsserver.stop();
+                self.inner.terminals.kill_all();
                 val(true)
             }
             "rescan" => val(&*self.rescan()?),
@@ -267,23 +284,78 @@ impl Backend {
                 std::fs::write(&p, content).with_context(|| format!("writing {rel}"))?;
                 val(true)
             }
-            "deleteFile" => {
+            "createFile" | "createDir" => {
                 let rel: String = arg(a, "path")?;
                 let p = self.path_in_root(&rel)?;
-                if p.is_dir() {
-                    std::fs::remove_dir_all(&p)?;
+                if p == self.root()? {
+                    bail!("Give the new {} a name", if cmd == "createDir" { "folder" } else { "file" });
+                }
+                if p.exists() {
+                    bail!("{rel} already exists");
+                }
+                if cmd == "createDir" {
+                    std::fs::create_dir_all(&p).with_context(|| format!("creating {rel}"))?;
                 } else {
-                    std::fs::remove_file(&p)?;
+                    if let Some(parent) = p.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(&p).with_context(|| format!("creating {rel}"))?;
                 }
                 val(true)
             }
-            "renameFile" => {
-                let from = self.path_in_root(&arg::<String>(a, "from")?)?;
-                let to = self.path_in_root(&arg::<String>(a, "to")?)?;
-                if to.exists() {
-                    bail!("{} already exists", to.display());
+            "deleteFile" => {
+                let rel: String = arg(a, "path")?;
+                let p = self.path_in_root(&rel)?;
+                if p == self.root()? {
+                    bail!("The project folder itself can't be deleted from here");
                 }
-                std::fs::rename(from, to)?;
+                if !p.exists() {
+                    bail!("{rel} doesn't exist");
+                }
+                // The Recycle Bin, as in Explorer and VS Code, so a slip can be restored.
+                trash::delete(&p).with_context(|| format!("moving {rel} to the Recycle Bin"))?;
+                val(true)
+            }
+            "renameFile" => {
+                let from_rel: String = arg(a, "from")?;
+                let to_rel: String = arg(a, "to")?;
+                let from = self.path_in_root(&from_rel)?;
+                let to = self.path_in_root(&to_rel)?;
+                let root = self.root()?;
+                if from == root || to == root {
+                    bail!("The project folder itself can't be renamed from here");
+                }
+                // A case-only rename (user.ts → User.ts) finds the file itself on Windows.
+                let same_file = from_rel.to_lowercase() == to_rel.to_lowercase();
+                if to.exists() && !same_file {
+                    bail!("{to_rel} already exists");
+                }
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&from, &to).with_context(|| format!("renaming {from_rel} to {to_rel}"))?;
+                val(true)
+            }
+            "formatFile" => {
+                let rel: String = arg(a, "path")?;
+                let text: String = arg(a, "text")?;
+                let root = self.root()?;
+                self.path_in_root(&rel)?;
+                val(self.inner.formatter.format(&root, &rel, &text)?)
+            }
+            // ---- IntelliSense (the project's tsserver) ------------------------------------------------
+            "tsStart" => val(self.inner.tsserver.start(&self.root()?)?),
+            "tsRequest" => {
+                let command: String = arg(a, "command")?;
+                let args: Value = a.get("args").cloned().unwrap_or(Value::Null);
+                let sync: Option<Value> = a.get("sync").cloned();
+                let timeout = Duration::from_millis(opt_arg::<u64>(a, "timeoutMs").unwrap_or(30_000).clamp(1_000, 120_000));
+                self.inner.tsserver.request(&self.root()?, &command, args, sync, timeout)
+            }
+            "revealPath" => {
+                let rel: String = arg(a, "path")?;
+                let p = self.path_in_root(&rel)?;
+                reveal(&p)?;
                 val(true)
             }
 
@@ -406,12 +478,30 @@ impl Backend {
                 val(self.inner.procs.kill(&id))
             }
             "processes" => val(self.inner.procs.running()),
-            "runCommand" => {
-                let line: String = arg(a, "line")?;
-                let root = self.root()?;
-                let mut c = shell_command(&line, &root);
-                c.env("FORCE_COLOR", "1");
-                val(self.inner.procs.spawn("terminal", c)?)
+            "terminalProfiles" => val(pty::profiles()),
+            "ptySpawn" => {
+                let id: String = arg(a, "id")?;
+                let profile: Option<String> = opt_arg(a, "profile");
+                let cols: u16 = opt_arg(a, "cols").unwrap_or(100);
+                let rows: u16 = opt_arg(a, "rows").unwrap_or(24);
+                let cwd = self.root().ok().or_else(|| std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from)).unwrap_or_else(std::env::temp_dir);
+                val(self.inner.terminals.spawn(&id, profile.as_deref(), &cwd, cols, rows)?)
+            }
+            "ptyWrite" => {
+                let id: String = arg(a, "id")?;
+                let data: String = arg(a, "data")?;
+                self.inner.terminals.write(&id, &data)?;
+                val(true)
+            }
+            "ptyResize" => {
+                let id: String = arg(a, "id")?;
+                self.inner.terminals.resize(&id, arg(a, "cols")?, arg(a, "rows")?)?;
+                val(true)
+            }
+            "ptyKill" => {
+                let id: String = arg(a, "id")?;
+                self.inner.terminals.kill(&id);
+                val(true)
             }
             "runTests" => {
                 let e2e: bool = opt_arg(a, "e2e").unwrap_or(false);
@@ -423,7 +513,33 @@ impl Backend {
             "typecheck" => val(self.typecheck()?),
 
             // ---- packages -----------------------------------------------------------------------
-            "pkgList" => val(pm::list(&self.root()?)),
+            "pkgList" => val(self.package_list()?),
+            "pkgDetails" => {
+                let name: String = arg(a, "name")?;
+                let root = self.root()?;
+                let wiring = wiring::steps(&root, &*self.model()?, &name);
+                val(packages::details(&packages::registry_url(&root), &self.package_list()?, &name, wiring))
+            }
+            "pkgCommand" => {
+                let action: PackageAction = arg(a, "action")?;
+                let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
+                let dev: bool = opt_arg(a, "dev").unwrap_or(false);
+                let dev_specs: Vec<String> = opt_arg(a, "devPackages").unwrap_or_default();
+                val(packages::commands_for(self.package_manager(), action, &specs, dev, &dev_specs).iter().map(|c| pm::display(c)).collect::<Vec<_>>())
+            }
+            "pkgWire" => {
+                let name: String = arg(a, "name")?;
+                let steps: Vec<String> = arg(a, "steps")?;
+                let cs = wiring::wire(&self.root()?, &*self.model()?, &name, &steps)?;
+                self.remember(cs)
+            }
+            "pkgUnwire" => {
+                let name: String = arg(a, "name")?;
+                match wiring::unwire(&self.root()?, &*self.model()?, &name) {
+                    Some(cs) => self.remember(cs),
+                    None => Ok(Value::Null),
+                }
+            }
             "pkgLatest" => {
                 let root = self.root()?;
                 val(packages::latest_versions(&packages::registry_url(&root), &pm::list(&root)))
@@ -448,7 +564,8 @@ impl Backend {
                 let action: PackageAction = arg(a, "action")?;
                 let specs: Vec<String> = opt_arg(a, "packages").unwrap_or_default();
                 let dev: bool = opt_arg(a, "dev").unwrap_or(false);
-                val(self.run_packages(action, specs, dev)?)
+                let dev_specs: Vec<String> = opt_arg(a, "devPackages").unwrap_or_default();
+                val(self.run_packages(action, specs, dev, dev_specs)?)
             }
 
             // ---- env -------------------------------------------------------------------------------
@@ -570,6 +687,9 @@ impl Backend {
             s.stop();
         }
         self.inner.procs.kill_all();
+        self.inner.formatter.stop();
+        self.inner.tsserver.stop();
+        self.inner.terminals.kill_all();
         let generation;
         {
             let mut st = self.inner.state.lock().unwrap();
@@ -652,7 +772,8 @@ impl Backend {
             if name == ".git" {
                 continue;
             }
-            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            // Follows symlinks and junctions, so a linked node_modules lists as a folder.
+            let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
             let path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
             out.push(DirEntry { ignored: IGNORED_DIRS.contains(&name.as_str()), name, path, dir: is_dir });
         }
@@ -711,28 +832,47 @@ impl Backend {
         });
     }
 
-    /// Runs one add, remove or install in the background as process `packages`, then emits
-    /// `task-done` and a rescan. Returns the command line.
-    fn run_packages(&self, action: PackageAction, specs: Vec<String>, dev: bool) -> Result<String> {
-        if action != PackageAction::Install && specs.is_empty() {
+    /// The project's packages with the source files that import each one.
+    fn package_list(&self) -> Result<pm::PackageList> {
+        let root = self.root()?;
+        let mut list = pm::list(&root);
+        let files: Vec<String> = self.model()?.files.iter().map(|f| f.path.clone()).collect();
+        let mut usages = pm::usages(&root, &files);
+        for p in &mut list.packages {
+            p.used_in = usages.remove(&p.name).unwrap_or_default();
+        }
+        Ok(list)
+    }
+
+    /// Runs one add (`specs`, then `dev_specs` as dev dependencies), remove or install in the
+    /// background as process `packages`, then emits `task-done` and a rescan. Returns the
+    /// command lines.
+    fn run_packages(&self, action: PackageAction, specs: Vec<String>, dev: bool, dev_specs: Vec<String>) -> Result<Vec<String>> {
+        if action != PackageAction::Install && specs.is_empty() && dev_specs.is_empty() {
             bail!("No packages given");
         }
-        if let Some(bad) = specs.iter().find(|s| s.starts_with('-') || s.trim().is_empty()) {
+        if let Some(bad) = specs.iter().chain(&dev_specs).find(|s| s.starts_with('-') || s.trim().is_empty()) {
             bail!("Not a package name: {bad}");
         }
         let root = self.root()?;
-        let cmdline = packages::command_for(self.package_manager(), action, &specs, dev);
-        let shown = pm::display(&cmdline);
+        let cmds = packages::commands_for(self.package_manager(), action, &specs, dev, &dev_specs);
+        let shown: Vec<String> = cmds.iter().map(|c| pm::display(c)).collect();
         if self.inner.procs.is_running("install") || self.inner.packages_busy.swap(true, Ordering::SeqCst) {
             bail!("Another install is still running");
         }
         let me = self.clone();
-        let line = shown.clone();
         std::thread::spawn(move || {
-            me.emit("process-output", json!({ "id": "packages", "stream": "stdout", "text": format!("$ {line}") }));
-            let res = command(&cmdline[0], &cmdline[1..], &root, &[("FORCE_COLOR".into(), "1".into())])
-                .and_then(|c| me.inner.procs.run("packages", c))
-                .and_then(|(code, out)| if code == 0 { Ok(()) } else { Err(anyhow!("{line} failed:\n{}", tail(&out, 15))) });
+            let mut res = Ok(());
+            for cmdline in cmds {
+                let line = pm::display(&cmdline);
+                me.emit("process-output", json!({ "id": "packages", "stream": "stdout", "text": format!("$ {line}") }));
+                res = command(&cmdline[0], &cmdline[1..], &root, &[("FORCE_COLOR".into(), "1".into())])
+                    .and_then(|c| me.inner.procs.run("packages", c))
+                    .and_then(|(code, out)| if code == 0 { Ok(()) } else { Err(anyhow!("{line} failed:\n{}", tail(&out, 15))) });
+                if res.is_err() {
+                    break;
+                }
+            }
             me.inner.packages_busy.store(false, Ordering::SeqCst);
             me.emit("task-done", json!({ "id": "packages", "ok": res.is_ok(), "error": res.err().map(|e| format!("{e:#}")) }));
             me.rescan_and_emit(vec!["package.json".into()]);
@@ -1125,6 +1265,21 @@ fn short_version(v: &str) -> String {
         return format!("{} {}", words[0], words[1]);
     }
     v.to_string()
+}
+
+/// Shows a file or folder in the system file manager, selected.
+fn reveal(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // explorer.exe exits with 1 even when it worked, so the status means nothing.
+        std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", path.display())).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("-R").arg(path).spawn()?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn()?;
+    Ok(())
 }
 
 pub fn tail(s: &str, lines: usize) -> String {

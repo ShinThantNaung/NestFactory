@@ -164,7 +164,13 @@ export function getModel(path: string): Promise<monaco.editor.ITextModel> {
     if (again) return again;
     const m = monaco.editor.createModel(content, languageFor(path), uriFor(path));
     saved.set(path, m.getAlternativeVersionId());
-    m.onDidChangeContent(() => setDirty(path, m.getAlternativeVersionId() !== saved.get(path)));
+    m.onDidChangeContent(() => {
+      const dirty = m.getAlternativeVersionId() !== saved.get(path);
+      setDirty(path, dirty);
+      // A file without a tab can only change through a refactoring (rename, quick fix, updated
+      // imports); like VS Code's files.refactoring.autoSave, it's saved rather than left dirty.
+      if (dirty && !useApp.getState().tabs.some((t) => t.path === path)) scheduleBackgroundSave(path);
+    });
     return m;
   });
   loading.set(path, p);
@@ -172,14 +178,224 @@ export function getModel(path: string): Promise<monaco.editor.ITextModel> {
   return p;
 }
 
+const backgroundSaves = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleBackgroundSave(path: string) {
+  clearTimeout(backgroundSaves.get(path));
+  backgroundSaves.set(
+    path,
+    setTimeout(async () => {
+      backgroundSaves.delete(path);
+      const m = monaco.editor.getModel(uriFor(path));
+      if (!m || m.isDisposed() || !isDirty(path) || useApp.getState().tabs.some((t) => t.path === path)) return;
+      const version = m.getAlternativeVersionId();
+      try {
+        await api.writeFile(path, m.getValue());
+        saved.set(path, version);
+      } catch (e) {
+        toast(errorText(e), 'error');
+      }
+    }, 300),
+  );
+}
+
 export function isDirty(path: string) {
   const m = monaco.editor.getModel(uriFor(path));
   return !!m && m.getAlternativeVersionId() !== saved.get(path);
 }
 
+// ---- formatting --------------------------------------------------------------------------------
+// The project's Prettier formats every language it knows, like the VS Code extension. Without
+// Prettier, TypeScript and JavaScript fall back to the TypeScript formatter and JSON to a plain
+// re-indent. The built-in document formatters for JSON, CSS and HTML are turned off so this is
+// the one Format Document (Shift Alt F) uses; Format Selection keeps the built-in ones.
+const FORMAT_LANGUAGES = ['typescript', 'javascript', 'json', 'css', 'scss', 'less', 'html', 'markdown', 'yaml', 'graphql'];
+
+for (const d of [monaco.json.jsonDefaults, monaco.css.cssDefaults, monaco.css.scssDefaults, monaco.css.lessDefaults, monaco.html.htmlDefaults]) {
+  d.setModeConfiguration({ ...d.modeConfiguration, documentFormattingEdits: false });
+}
+
+function setFormatter(name: string, version: string | null, error: string | null) {
+  const cur = useApp.getState().formatter;
+  if (cur?.name !== name || cur.version !== version || cur.error !== error) useApp.setState({ formatter: { name, version, error } });
+}
+
+/** TypeScript's own formatter, with the options Monaco's TypeScript support uses. */
+async function builtinFormat(model: monaco.editor.ITextModel, opts: monaco.languages.FormattingOptions): Promise<string | null> {
+  const lang = model.getLanguageId();
+  if (lang === 'json') {
+    try {
+      return JSON.stringify(JSON.parse(model.getValue()), null, opts.insertSpaces ? opts.tabSize : '\t') + '\n';
+    } catch {
+      return null; // JSON with comments, or broken: leave it.
+    }
+  }
+  if (lang !== 'typescript' && lang !== 'javascript') return null;
+  const getWorker = lang === 'typescript' ? monaco.typescript.getTypeScriptWorker : monaco.typescript.getJavaScriptWorker;
+  const worker = await (await getWorker())(model.uri);
+  const changes: { span: { start: number; length: number }; newText: string }[] = await worker.getFormattingEditsForDocument(model.uri.toString(), {
+    ConvertTabsToSpaces: opts.insertSpaces,
+    TabSize: opts.tabSize,
+    IndentSize: opts.tabSize,
+    IndentStyle: 2,
+    NewLineCharacter: '\n',
+    InsertSpaceAfterCommaDelimiter: true,
+    InsertSpaceAfterSemicolonInForStatements: true,
+    InsertSpaceBeforeAndAfterBinaryOperators: true,
+    InsertSpaceAfterKeywordsInControlFlowStatements: true,
+    InsertSpaceAfterFunctionKeywordForAnonymousFunctions: true,
+    InsertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis: false,
+    InsertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets: false,
+    InsertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces: false,
+    PlaceOpenBraceOnNewLineForControlBlocks: false,
+    PlaceOpenBraceOnNewLineForFunctions: false,
+  });
+  let text = model.getValue();
+  for (const c of [...changes].sort((a, b) => b.span.start - a.span.start)) text = text.slice(0, c.span.start) + c.newText + text.slice(c.span.start + c.span.length);
+  return text;
+}
+
+/** The formatted text of a buffer, or null when there's nothing to do (or it couldn't be formatted). */
+async function formattedText(model: monaco.editor.ITextModel, opts: monaco.languages.FormattingOptions): Promise<string | null> {
+  const path = pathForUri(model.uri);
+  if (!path) return null;
+  try {
+    const r = await api.formatFile(path, model.getValue(monaco.editor.EndOfLinePreference.LF));
+    if (r.formatter) {
+      setFormatter('Prettier', r.version, r.error);
+      return r.error ? null : r.text;
+    }
+  } catch (e) {
+    setFormatter('Prettier', null, errorText(e));
+    return null;
+  }
+  try {
+    const text = await builtinFormat(model, opts);
+    if (text !== null) setFormatter('Built-in', null, null);
+    return text;
+  } catch (e) {
+    setFormatter('Built-in', null, errorText(e));
+    return null;
+  }
+}
+
+/** Indices [a1, a2) of `a` to replace with [b1, b2) of `b`, from a line LCS of the changed middle. */
+function lineHunks(a: string[], b: string[]): [number, number, number, number][] {
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const n = endA - start;
+  const m = endB - start;
+  if (n === 0 && m === 0) return [];
+  // Past ~4M cells the table costs more than it saves; replace the middle in one piece.
+  if (n * m > 4_000_000) return [[start, endA, start, endB]];
+  const w = m + 1;
+  const lcs = new Uint16Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i * w + j] = a[start + i] === b[start + j] ? lcs[(i + 1) * w + j + 1] + 1 : Math.max(lcs[(i + 1) * w + j], lcs[i * w + j + 1]);
+    }
+  }
+  const hunks: [number, number, number, number][] = [];
+  let i = 0;
+  let j = 0;
+  let hi = -1;
+  let hj = -1;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[start + i] === b[start + j]) {
+      if (hi >= 0) hunks.push([start + hi, start + i, start + hj, start + j]);
+      hi = -1;
+      i++;
+      j++;
+    } else {
+      if (hi < 0) {
+        hi = i;
+        hj = j;
+      }
+      if (j < m && (i === n || lcs[i * w + j + 1] >= lcs[(i + 1) * w + j])) j++;
+      else i++;
+    }
+  }
+  if (hi >= 0) hunks.push([start + hi, endA, start + hj, endB]);
+  return hunks;
+}
+
+/** Edits that turn the buffer into `next` while leaving unchanged lines (and the cursor on them) alone. */
+function minimalEdits(model: monaco.editor.ITextModel, next: string): monaco.languages.TextEdit[] {
+  const a = model.getLinesContent();
+  const b = next.split(/\r?\n/);
+  const last = a.length;
+  const edits: monaco.languages.TextEdit[] = [];
+  for (const [a1, a2, b1, b2] of lineHunks(a, b)) {
+    const lines = b.slice(b1, b2);
+    if (a2 - a1 === b2 - b1) {
+      // Same number of lines: edit only the changed middle of each line.
+      for (let k = 0; k < lines.length; k++) {
+        const x = a[a1 + k];
+        const y = lines[k];
+        if (x === y) continue;
+        let p = 0;
+        while (p < x.length && p < y.length && x[p] === y[p]) p++;
+        let s = 0;
+        while (s < x.length - p && s < y.length - p && x[x.length - 1 - s] === y[y.length - 1 - s]) s++;
+        edits.push({ range: new monaco.Range(a1 + k + 1, p + 1, a1 + k + 1, x.length - s + 1), text: y.slice(p, y.length - s) });
+      }
+    } else if (a2 < last) {
+      edits.push({ range: new monaco.Range(a1 + 1, 1, a2 + 1, 1), text: lines.map((l) => `${l}\n`).join('') });
+    } else if (a1 > 0) {
+      edits.push({ range: new monaco.Range(a1, model.getLineMaxColumn(a1), last, model.getLineMaxColumn(last)), text: lines.map((l) => `\n${l}`).join('') });
+    } else {
+      edits.push({ range: model.getFullModelRange(), text: lines.join('\n') });
+    }
+  }
+  return edits;
+}
+
+monaco.languages.registerDocumentFormattingEditProvider(FORMAT_LANGUAGES, {
+  displayName: 'Prettier',
+  async provideDocumentFormattingEdits(model, options) {
+    const version = model.getVersionId();
+    const next = await formattedText(model, options);
+    if (next === null || model.isDisposed() || model.getVersionId() !== version) return [];
+    return minimalEdits(model, next);
+  },
+});
+
+/** Formats a buffer in place: through the editor showing it (one undo step, cursor kept), else directly. */
+export async function formatBuffer(model: monaco.editor.ITextModel) {
+  if (!FORMAT_LANGUAGES.includes(model.getLanguageId())) return;
+  const ed = monaco.editor.getEditors().find((e) => e.getModel() === model);
+  const action = ed?.getAction('editor.action.formatDocument');
+  if (action?.isSupported()) {
+    await action.run();
+    return;
+  }
+  const o = model.getOptions();
+  const version = model.getVersionId();
+  const next = await formattedText(model, { tabSize: o.tabSize, insertSpaces: o.insertSpaces });
+  if (next === null || model.isDisposed() || model.getVersionId() !== version) return;
+  const edits = minimalEdits(model, next);
+  if (edits.length) model.pushEditOperations([], edits, () => null);
+}
+
+/** Steps that run on save before formatting (e.g. adding missing imports); failures don't stop the save. */
+export const saveParticipants: ((model: monaco.editor.ITextModel) => Promise<void>)[] = [];
+
 export async function saveFile(path: string) {
   const m = monaco.editor.getModel(uriFor(path));
   if (!m) return;
+  for (const p of saveParticipants) {
+    try {
+      await p(m);
+    } catch {
+      // Saving matters more than the extra step.
+    }
+  }
+  if (useApp.getState().settings?.formatOnSave) await formatBuffer(m);
   try {
     await api.writeFile(path, m.getValue());
     saved.set(path, m.getAlternativeVersionId());
@@ -210,6 +426,43 @@ export async function reloadFromDisk(paths: string[]) {
     } catch {
       // Deleted: leave the buffer as is.
     }
+  }
+}
+
+const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
+
+/** After a rename on disk: reopens the buffers under `from` at their new paths, keeping unsaved edits. */
+export async function renameBuffers(from: string, to: string) {
+  const moved: { old: string; next: string; unsaved: string | null }[] = [];
+  for (const t of useApp.getState().tabs) {
+    if (!under(t.path, from)) continue;
+    const m = monaco.editor.getModel(uriFor(t.path));
+    moved.push({ old: t.path, next: to + t.path.slice(from.length), unsaved: m && isDirty(t.path) ? m.getValue() : null });
+  }
+  if (!moved.length) return;
+  const nextOf = (p: string | null) => moved.find((x) => x.old === p)?.next ?? p;
+  useApp.setState((s) => ({ tabs: s.tabs.map((t) => ({ ...t, path: nextOf(t.path)! })), active: nextOf(s.active) }));
+  for (const mv of moved) {
+    monaco.editor.getModel(uriFor(mv.old))?.dispose();
+    saved.delete(mv.old);
+    if (mv.unsaved !== null) (await getModel(mv.next)).setValue(mv.unsaved);
+  }
+}
+
+/** After a delete on disk: closes the tabs under `path` and drops their buffers. */
+export function dropBuffers(path: string) {
+  const s = useApp.getState();
+  const gone = s.tabs.filter((t) => under(t.path, path)).map((t) => t.path);
+  if (!gone.length) return;
+  useApp.setState((st) => {
+    const tabs = st.tabs.filter((t) => !gone.includes(t.path));
+    const idx = st.tabs.findIndex((t) => t.path === st.active);
+    const active = st.active && gone.includes(st.active) ? (tabs[Math.min(idx, tabs.length - 1)]?.path ?? null) : st.active;
+    return { tabs, active };
+  });
+  for (const p of gone) {
+    monaco.editor.getModel(uriFor(p))?.dispose();
+    saved.delete(p);
   }
 }
 
@@ -260,6 +513,8 @@ monaco.languages.registerCodeLensProvider('typescript', {
 
 monaco.languages.registerDefinitionProvider('typescript', {
   provideDefinition(textModel, position) {
+    // The TypeScript server knows every definition; this is the fallback without it.
+    if (useApp.getState().ts.status === 'ready') return null;
     const word = textModel.getWordAtPosition(position)?.word;
     const m = model();
     if (!word || !m) return null;
@@ -294,10 +549,12 @@ monaco.editor.registerEditorOpener({
   },
 });
 
-/** Graph diagnostics and tsc problems as editor markers. */
+/** Graph diagnostics and tsc problems as editor markers. With the TypeScript server running, its live
+ *  diagnostics replace the tsc ones (which describe the files as last saved). */
 export function updateMarkers() {
   const s = useApp.getState();
   const m = s.model;
+  const live = s.ts.status === 'ready';
   for (const tm of monaco.editor.getModels()) {
     const path = pathForUri(tm.uri);
     if (!path) continue;
@@ -316,7 +573,7 @@ export function updateMarkers() {
       });
     }
     for (const p of s.problems) {
-      if (p.file !== path) continue;
+      if (live || p.file !== path) continue;
       markers.push({
         severity: p.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
         message: p.message,
@@ -333,5 +590,5 @@ export function updateMarkers() {
 }
 
 useApp.subscribe((s, prev) => {
-  if (s.model !== prev.model || s.problems !== prev.problems) updateMarkers();
+  if (s.model !== prev.model || s.problems !== prev.problems || s.ts.status !== prev.ts.status) updateMarkers();
 });

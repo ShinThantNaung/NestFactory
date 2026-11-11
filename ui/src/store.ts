@@ -9,13 +9,22 @@ import type { Changeset } from './bindings/Changeset';
 import type { Schematic } from './bindings/Schematic';
 import type { Breakpoint } from './bindings/Breakpoint';
 import type { ApiRequest } from './bindings/ApiRequest';
+import type { LatestVersion } from './bindings/LatestVersion';
+import type { PackageAction } from './bindings/PackageAction';
 
-export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'api' | 'tests' | 'env' | 'settings';
-export type PanelTab = 'run' | 'problems' | 'tests' | 'terminal';
+export type View = 'explorer' | 'graph' | 'generate' | 'database' | 'packages' | 'api' | 'tests' | 'env' | 'settings';
+export type PanelTab = 'run' | 'problems' | 'tests' | 'output' | 'terminal';
 
 export interface LogLine {
   stream: string;
   text: string;
+}
+
+export interface TerminalInfo {
+  id: string;
+  name: string;
+  profile: string;
+  exited: boolean;
 }
 
 export interface Tab {
@@ -51,6 +60,32 @@ export interface Preview {
   onApplied?: () => void;
 }
 
+/** Widths and visibility of the explorer (left) and inspector (right), kept between runs. */
+export interface Layout {
+  sideWidth: number;
+  sideHidden: boolean;
+  inspectorWidth: number;
+  inspectorHidden: boolean;
+}
+
+export const LAYOUT_DEFAULT: Layout = { sideWidth: 260, sideHidden: false, inspectorWidth: 300, inspectorHidden: false };
+
+function loadLayout(): Layout {
+  try {
+    return { ...LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem('nf.layout') ?? '{}') };
+  } catch {
+    return LAYOUT_DEFAULT;
+  }
+}
+
+export interface Confirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+}
+
 interface State {
   screen: 'welcome' | 'wizard' | 'project';
   model: ProjectModel | null;
@@ -63,6 +98,10 @@ interface State {
   cursor: { line: number; col: number };
   panelOpen: boolean;
   panelTab: PanelTab;
+  layout: Layout;
+  /** Open terminals in the panel, in tab order (their xterm instances live in terminal.ts). */
+  terminals: TerminalInfo[];
+  activeTerminal: string | null;
   logs: Record<string, LogLine[]>;
   running: Record<string, boolean>;
   runScript: string;
@@ -73,6 +112,7 @@ interface State {
   testsRunning: boolean;
   generator: { schematic: Schematic; directory: string | null; module: string | null } | null;
   preview: Preview | null;
+  confirm: Confirm | null;
   breakpoints: Breakpoint[];
   debug: { state: string; detail: string; frames: DebugFrame[] | null; mode: 'app' | 'test' | null };
   apiDraft: ApiRequest | null;
@@ -80,6 +120,17 @@ interface State {
   palette: 'commands' | 'files' | null;
   entityDesigner: { directory?: string; module?: string } | null;
   busy: string | null;
+  /** The package command running now (Packages view), and the last one that ran. */
+  packagesRunning: string | null;
+  lastPackageCommand: string | null;
+  /** Latest versions from the registry, kept while the project is open. */
+  latestVersions: LatestVersion[] | null;
+  /** The formatter the last format used, and its error if it failed (for the status bar). */
+  formatter: { name: string; version: string | null; error: string | null } | null;
+  /** Window zoom factor (1 = 100%). */
+  zoom: number;
+  /** The project's TypeScript server (IntelliSense): starting, ready, or failed (the editor's built-in TypeScript then). */
+  ts: { status: 'off' | 'starting' | 'ready' | 'error'; version: string | null; error: string | null };
 }
 
 export const useApp = create<State>(() => ({
@@ -94,6 +145,9 @@ export const useApp = create<State>(() => ({
   cursor: { line: 1, col: 1 },
   panelOpen: true,
   panelTab: 'run',
+  layout: loadLayout(),
+  terminals: [],
+  activeTerminal: null,
   logs: {},
   running: {},
   runScript: 'start:dev',
@@ -104,6 +158,7 @@ export const useApp = create<State>(() => ({
   testsRunning: false,
   generator: null,
   preview: null,
+  confirm: null,
   breakpoints: [],
   debug: { state: 'idle', detail: '', frames: null, mode: null },
   apiDraft: null,
@@ -111,6 +166,12 @@ export const useApp = create<State>(() => ({
   palette: null,
   entityDesigner: null,
   busy: null,
+  packagesRunning: null,
+  lastPackageCommand: null,
+  latestVersions: null,
+  formatter: null,
+  zoom: 1,
+  ts: { status: 'off', version: null, error: null },
 }));
 
 const set = useApp.setState;
@@ -141,7 +202,7 @@ export async function openProject(path: string) {
   try {
     const model = await api.openProject(path);
     const settings = await api.getSettings();
-    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root) });
+    set({ model, settings, screen: 'project', view: 'explorer', tabs: [], active: null, problems: [], testRun: null, logs: {}, running: {}, appStarted: false, breakpoints: loadBreakpoints(model.root), latestVersions: null, lastPackageCommand: null, formatter: null });
     const main = model.files.find((f) => f.kind === 'main');
     const firstController = model.classes.find((c) => c.kind === 'controller');
     if (firstController) openFile(firstController.file, firstController.line);
@@ -196,6 +257,12 @@ export function clearLog(id: string) {
   set((s) => ({ logs: { ...s.logs, [id]: [] } }));
 }
 
+/** An in-app yes/no dialog; resolves false when dismissed. */
+export function askConfirm(opts: Omit<Confirm, 'resolve'>): Promise<boolean> {
+  get().confirm?.resolve(false);
+  return new Promise((resolve) => set({ confirm: { ...opts, resolve } }));
+}
+
 export function showPreview(changeset: Changeset, opts: Omit<Preview, 'changeset'> = {}) {
   set({ preview: { changeset, ...opts } });
 }
@@ -207,7 +274,7 @@ export async function applyChangeset(cs: Changeset, onApplied?: () => void) {
     const n = res.changeset.files.length;
     toast(`${res.changeset.label} · wrote ${n} change${n === 1 ? '' : 's'}`, 'success', { label: 'Undo', run: () => undo() });
     if (res.changeset.install.length || res.changeset.installDev.length || res.changeset.runInstall) {
-      set({ panelOpen: true, panelTab: 'terminal' });
+      set({ panelOpen: true, panelTab: 'output' });
       toast('Installing packages…');
     }
     onApplied?.();
@@ -315,6 +382,38 @@ export async function startDebug(mode: 'app' | 'test', file: string | null = nul
 export async function stopDebug() {
   await guard(api.debugStop());
   set({ debug: { state: 'idle', detail: '', frames: null, mode: null } });
+}
+
+/** Starts a package command; output streams as process `packages`, and `task-done` ends it. */
+export async function runPackages(action: PackageAction, packages: string[], dev = false, devPackages: string[] = []) {
+  clearLog('packages');
+  try {
+    const lines = await api.pkgRun(action, packages, dev, devPackages);
+    set({ packagesRunning: lines.join(' && '), lastPackageCommand: lines.join(' && ') });
+    return true;
+  } catch (e) {
+    toast(errorText(e), 'error');
+    return false;
+  }
+}
+
+/** Changes the side panels; `persist` false while dragging, saved on release. */
+export function setLayout(patch: Partial<Layout>, persist = true) {
+  set((s) => ({ layout: { ...s.layout, ...patch } }));
+  if (!persist) return;
+  try {
+    localStorage.setItem('nf.layout', JSON.stringify(get().layout));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function toggleSidebar() {
+  setLayout({ sideHidden: !get().layout.sideHidden });
+}
+
+export function toggleInspector() {
+  setLayout({ inspectorHidden: !get().layout.inspectorHidden });
 }
 
 export function setView(view: View) {

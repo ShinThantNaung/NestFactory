@@ -4,7 +4,7 @@ export type SearchHit = { name: string, version: string, description: string | n
 /**
  * When the latest version was published (ISO 8601).
  */
-date: string | null, weeklyDownloads: bigint | null, homepage: string | null, repository: string | null, npm: string, 
+date: string | null, weeklyDownloads: number | null, homepage: string | null, repository: string | null, npm: string, 
 /**
  * The package.json range when the project already depends on it.
  */

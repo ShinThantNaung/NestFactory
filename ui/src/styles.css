@@ -286,6 +286,18 @@ input[type='radio'] {
   border-color: var(--ember-hover);
 }
 
+.btn.danger {
+  background: var(--error-bg);
+  border-color: var(--error);
+  color: var(--error);
+  font-weight: 600;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--on-ember);
+}
+
 .btn.ghost {
   background: none;
   border-color: transparent;
@@ -678,6 +690,14 @@ legend {
   color: var(--text-2);
   font-size: 12.5px;
   cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.search-trigger > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .run-controls {
@@ -914,6 +934,77 @@ legend {
   color: var(--text-3);
 }
 
+.tree-row.selected:not(.active) {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+
+.tree:focus {
+  outline: none;
+}
+
+.tree-edit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding-right: 4px;
+  flex: none;
+}
+
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--bg-editor);
+  border: 1px solid var(--ember);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.tree-input.invalid {
+  border-color: var(--error);
+}
+
+.tree-input-error {
+  position: absolute;
+  top: 25px;
+  left: 30px;
+  right: 4px;
+  z-index: 6;
+  padding: 5px 8px;
+  background: var(--error-bg);
+  border: 1px solid var(--error);
+  border-radius: 0 0 5px 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: normal;
+}
+
+.side-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.side-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.side-mode {
+  flex: none;
+  padding: 8px 10px 4px;
+}
+
+.side-mode .segmented button {
+  flex: 1;
+}
+
 .kind {
   width: 16px;
   height: 16px;
@@ -1020,7 +1111,7 @@ legend {
 }
 
 /* ---- editor ----------------------------------------------------------------------- */
-.main {
+main.main {
   flex: 999 1 560px;
   min-width: 0;
   display: flex;
@@ -1182,6 +1273,14 @@ legend {
   padding: 0 10px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.panel-tabs > span.faint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel-tabs button[role='tab'] {
@@ -1196,6 +1295,8 @@ legend {
   color: var(--text-2);
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 
 .panel-tabs button[aria-selected='true'] {
@@ -1210,6 +1311,63 @@ legend {
   position: relative;
   z-index: 5;
   flex: none;
+}
+
+.vresizer {
+  flex: none;
+  width: 7px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 6;
+  cursor: col-resize;
+}
+
+.resizer::after,
+.vresizer::after {
+  content: '';
+  position: absolute;
+  background: var(--ember);
+  opacity: 0;
+  transition: opacity 0.1s;
+  pointer-events: none;
+}
+
+.resizer::after {
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 3px;
+}
+
+.vresizer::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 3px;
+}
+
+.resizer:hover::after,
+.vresizer:hover::after,
+body.resizing-row .resizer::after,
+body.resizing-col .vresizer:active::after {
+  opacity: 0.7;
+  transition-delay: 0.15s;
+}
+
+.layout-toggles {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.layout-toggles .icon-btn {
+  width: 28px;
+  height: 26px;
+}
+
+.layout-toggles .icon-btn[aria-pressed='false'] {
+  color: var(--text-3);
 }
 
 .log {
@@ -1232,21 +1390,105 @@ legend {
   color: var(--text);
 }
 
-.terminal-input {
+.terminal-area {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  border-top: 1px solid var(--border-subtle);
+  position: relative;
 }
 
-.terminal-input input {
+.terminal-host {
   flex: 1;
-  background: none;
-  border: 0;
-  outline: none;
-  font-family: 'Geist Mono Variable', 'Geist Mono', monospace;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px 0 2px 14px;
+  overflow: hidden;
+}
+
+.xterm-wrap {
+  width: 100%;
+  height: 100%;
+}
+
+.xterm-wrap .xterm {
+  height: 100%;
+}
+
+.xterm-wrap .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.terminal-list {
+  flex: 0 0 170px;
+  border-left: 1px solid var(--border-subtle);
+  padding: 4px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.terminal-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 2px 0 8px;
+  border-radius: 6px;
+  color: var(--text-2);
   font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.terminal-item .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-item .icon-btn {
+  width: 22px;
+  height: 22px;
+  visibility: hidden;
+}
+
+.terminal-item:hover,
+.terminal-item[aria-selected='true'] {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.terminal-item:hover .icon-btn,
+.terminal-item[aria-selected='true'] .icon-btn {
+  visibility: visible;
+}
+
+.terminal-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+body.resizing-row,
+body.resizing-row * {
+  cursor: row-resize !important;
+}
+
+body.resizing-col,
+body.resizing-col * {
+  cursor: col-resize !important;
+}
+
+body.resizing-row iframe,
+body.resizing-col iframe {
+  pointer-events: none;
 }
 
 .problem {
@@ -1291,6 +1533,17 @@ legend {
   flex: none;
   max-width: 560px;
   margin: auto;
+}
+
+.dialog.confirm {
+  max-width: 440px;
+}
+
+.dialog.confirm p {
+  margin: 0;
+  padding: 18px 20px 20px;
+  line-height: 20px;
+  user-select: text;
 }
 
 .dialog-head {
@@ -1482,6 +1735,22 @@ legend {
 .context-menu {
   position: fixed;
   z-index: 80;
+}
+
+.zoom-hud {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  padding: 6px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .context-menu .menu {
@@ -1850,6 +2119,321 @@ legend {
   background: var(--success-bg);
   border-color: var(--success-bg);
   color: var(--success);
+}
+
+/* ---- packages ----------------------------------------------------------------------- */
+.pkg-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  margin-left: 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text-2);
+  flex: 0 1 420px;
+  min-width: 180px;
+}
+
+.pkg-search:focus-within {
+  border-color: var(--border-hover);
+}
+
+.pkg-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.pkg-pill {
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.pkg-filters {
+  flex: 1 1 200px;
+  max-width: 220px;
+  min-width: 180px;
+  padding: 14px 10px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+}
+
+.pkg-filters .caps {
+  padding: 16px 8px 8px;
+}
+
+.pkg-filters .caps:first-child {
+  padding-top: 0;
+}
+
+.pkg-filters button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  flex: none;
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pkg-filters button.cat {
+  height: 30px;
+  color: var(--text-2);
+}
+
+.pkg-filters button > :last-child:not(:first-child) {
+  margin-left: auto;
+}
+
+.pkg-filters button:hover {
+  background: var(--bg-raised);
+}
+
+.pkg-filters button[aria-current='true'] {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.pkg-list {
+  flex: 999 1 420px;
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.pkg-section {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  font-size: 12px;
+  color: var(--text-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+
+.pk:hover {
+  background: var(--bg-raised);
+}
+
+.pk.selected {
+  background: var(--option-bg);
+  box-shadow: inset 2px 0 0 var(--ember);
+}
+
+.pk-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pk-avatar.official {
+  background: var(--c-controller-bg);
+  color: var(--ember);
+}
+
+.pk-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pk-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pk-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.pk-installed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--success);
+}
+
+.pk-version {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.pk-hover {
+  display: none;
+  gap: 6px;
+}
+
+.pk:hover .pk-installed,
+.pk.selected .pk-installed,
+.pk:focus-within .pk-installed {
+  display: none;
+}
+
+.pk:hover .pk-hover,
+.pk.selected .pk-hover,
+.pk:focus-within .pk-hover {
+  display: flex;
+}
+
+.btn.warn {
+  background: var(--warning-bg);
+  border-color: transparent;
+  color: var(--warning);
+}
+
+.badge.official {
+  background: var(--c-controller-bg);
+  color: var(--ember);
+}
+
+.pkg-details {
+  flex: 1 1 380px;
+  max-width: 520px;
+  min-width: 300px;
+  padding: 22px;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow: auto;
+}
+
+.pkg-links {
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.pkg-links a {
+  color: var(--text-2);
+}
+
+.pkg-links a:hover {
+  color: var(--text);
+}
+
+.pkg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pkg-grid fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.pkg-grid select.input {
+  height: 34px;
+  background: var(--bg-editor);
+}
+
+.pkg-seg {
+  display: flex;
+  padding: 2px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+}
+
+.pkg-seg button {
+  flex: 1;
+  height: 28px;
+}
+
+.pkg-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-editor);
+}
+
+.pkg-file {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pkg-file:hover {
+  color: var(--ember);
+}
+
+.pkg-log {
+  font-size: 11.5px;
+  line-height: 18px;
+  max-height: 170px;
+  overflow: hidden;
 }
 
 /* No wrapping on desktop widths: a multi-line flex row is as tall as its content, so the

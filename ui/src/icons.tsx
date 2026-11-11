@@ -30,6 +30,12 @@ const paths: Record<string, ReactNode> = {
       <path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3" />
     </>
   ),
+  package: (
+    <>
+      <path d="M3 8l9-5 9 5v8l-9 5-9-5z" />
+      <path d="M3 8l9 5 9-5M12 13v8M7.5 5.5l9 5" />
+    </>
+  ),
   api: <path d="M3 12h4l3-7 4 14 3-7h4" />,
   tests: <path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3" />,
   env: (
@@ -126,11 +132,31 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  fileAdd: (
+    <>
+      <path d="M12 21H6V3h8l4 4v5" />
+      <path d="M14 3v4h4M18 15v6M15 18h6" />
+    </>
+  ),
+  folderAdd: (
+    <>
+      <path d="M12 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3" />
+      <path d="M18 14v6M15 17h6" />
+    </>
+  ),
+  collapseAll: (
+    <>
+      <path d="M8 4h10a2 2 0 0 1 2 2v10" />
+      <rect x="4" y="8" width="12" height="12" rx="2" />
+      <path d="M7.5 14h5" />
+    </>
+  ),
   terminal: (
     <>
       <path d="M5 8l4 4-4 4M12 16h7" />
     </>
   ),
+  clear: <path d="M4 7h12M4 12h9M4 17h6M15 15l5 5M20 15l-5 5" />,
   send: <path d="M4 12l16-8-6 16-2-7z" />,
   trash: <path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" />,
   save: (
@@ -159,6 +185,19 @@ export function Icon({ name, size, className, style }: { name: keyof typeof path
   return (
     <svg className={`ico ${className ?? ''}`} viewBox="0 0 24 24" style={s} aria-hidden="true">
       {paths[name] ?? null}
+    </svg>
+  );
+}
+
+/** A window outline with one part (left bar, bottom panel, right bar) drawn solid when it's showing. */
+export function LayoutIcon({ part, on, size = 16 }: { part: 'left' | 'bottom' | 'right'; on: boolean; size?: number }) {
+  const region = part === 'left' ? { x: 3, y: 4, w: 6, h: 16 } : part === 'right' ? { x: 15, y: 4, w: 6, h: 16 } : { x: 3, y: 13, w: 18, h: 7 };
+  const divider = part === 'left' ? 'M9 4v16' : part === 'right' ? 'M15 4v16' : 'M3 13h18';
+  return (
+    <svg className="ico" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      {on && <rect x={region.x} y={region.y} width={region.w} height={region.h} style={{ fill: 'currentColor', stroke: 'none', opacity: 0.55 }} />}
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d={divider} />
     </svg>
   );
 }

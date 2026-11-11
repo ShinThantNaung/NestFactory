@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, openUrl } from '../api';
 import { Icon } from '../icons';
-import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast, showPreview, type PanelTab } from '../store';
+import { useApp, openFile, setView, typecheck, runTests, clearLog, guard, toast, showPreview, setLayout, LAYOUT_DEFAULT, type PanelTab, type Layout } from '../store';
 import { ansiToHtml, basename, dirname, kindOf, KIND_LETTER, moduleForFile, stripAnsi } from '../util';
 import { EditorArea } from './Editor';
+import { TerminalView, TerminalActions } from './TerminalPanel';
 import { ContextMenu, openGenerator, type MenuItem } from './Shell';
+import { useExplorer, select, toggleFolder, collapseAll, refreshTree, setExplorerMode, startCreate, startRename, cancelInline, finishCreate, finishRename, deleteEntry, copyPath, reveal, nameProblem, type EntryKind } from '../explorer';
 import type { DirEntry } from '../bindings/DirEntry';
 import type { ModuleInfo } from '../bindings/ModuleInfo';
 import type { ClassInfo } from '../bindings/ClassInfo';
@@ -29,12 +31,142 @@ export function moduleMenu(m: ModuleInfo): MenuItem[] {
   ];
 }
 
+// ---- side panels ------------------------------------------------------------------------------
+/** The explorer's or inspector's size; hidden ones stay mounted so their state survives. */
+function useSideStyle(side: 'left' | 'right'): React.CSSProperties {
+  const width = useApp((s) => (side === 'left' ? s.layout.sideWidth : s.layout.inspectorWidth));
+  const hidden = useApp((s) => (side === 'left' ? s.layout.sideHidden : s.layout.inspectorHidden));
+  // Exact widths, so the edge follows the mouse; the editor gives way instead (drags keep it usable).
+  return hidden ? { display: 'none' } : { flex: `0 0 ${width}px`, width, maxWidth: 'none', minWidth: 0 };
+}
+
+const SIDE_MIN = 180;
+const MAIN_MIN = 320;
+const RAIL = 52;
+
+/**
+ * The draggable edge between the editor and a side panel. Dragging it past about half the
+ * minimum width collapses the panel, dragging back out reopens it, and a double-click resets it.
+ */
+function SideResizer({ side }: { side: 'left' | 'right' }) {
+  const hidden = useApp((s) => (side === 'left' ? s.layout.sideHidden : s.layout.inspectorHidden));
+  const keys = side === 'left' ? (['sideWidth', 'sideHidden'] as const) : (['inspectorWidth', 'inspectorHidden'] as const);
+  const label = side === 'left' ? 'explorer' : 'inspector';
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = useApp.getState().layout;
+    const startX = e.clientX;
+    const startW = start[keys[1]] ? 0 : start[keys[0]];
+    const other = side === 'left' ? (start.inspectorHidden ? 0 : start.inspectorWidth) : start.sideHidden ? 0 : start.sideWidth;
+    const max = Math.max(SIDE_MIN, Math.min(640, window.innerWidth - RAIL - other - MAIN_MIN));
+    document.body.classList.add('resizing-col');
+    const move = (ev: MouseEvent) => {
+      const w = startW + (side === 'left' ? ev.clientX - startX : startX - ev.clientX);
+      // Collapsing keeps the width from before the drag, for when it's shown again.
+      const patch: Partial<Layout> = w < SIDE_MIN / 2 ? { [keys[1]]: true, [keys[0]]: start[keys[0]] } : { [keys[1]]: false, [keys[0]]: Math.round(Math.max(SIDE_MIN, Math.min(max, w))) };
+      setLayout(patch, false);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.classList.remove('resizing-col');
+      setLayout({});
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  return (
+    <div
+      className={`vresizer ${side} ${hidden ? 'collapsed' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize the ${label}`}
+      title={hidden ? `Drag to show the ${label}` : `Drag to resize the ${label}; double-click to reset`}
+      onMouseDown={onMouseDown}
+      onDoubleClick={() => setLayout({ [keys[0]]: LAYOUT_DEFAULT[keys[0]], [keys[1]]: false })}
+    />
+  );
+}
+
 // ---- explorer ---------------------------------------------------------------------------------
-function NestTree() {
+type OpenMenu = (e: React.MouseEvent, items: MenuItem[]) => void;
+
+/** The context menu for a file or folder row, in either tree. */
+function entryMenu(path: string, dir: boolean): MenuItem[] {
+  const parent = dir ? path : dirname(path);
+  return [
+    ...(dir ? [] : [{ label: 'Open', run: () => openFile(path) }]),
+    { label: 'New file…', kbd: 'Ctrl N', run: () => startCreate('file', parent) },
+    { label: 'New folder…', run: () => startCreate('folder', parent) },
+    { separator: true, label: '' },
+    { label: 'Rename…', kbd: 'F2', run: () => startRename(path) },
+    { label: 'Delete', kbd: 'Del', run: () => void deleteEntry(path, dir) },
+    { separator: true, label: '' },
+    { label: 'Copy path', run: () => copyPath(path, false) },
+    { label: 'Copy relative path', run: () => copyPath(path, true) },
+    { label: 'Reveal in File Explorer', run: () => reveal(path) },
+  ];
+}
+
+/** An inline name box in the tree, for a new entry or a rename. */
+function InlineName({ pad, kind, initial, siblings, onSubmit }: { pad: number; kind: EntryKind; initial: string; siblings: string[]; onSubmit: (name: string) => void }) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    const dot = initial.lastIndexOf('.');
+    el.setSelectionRange(0, kind === 'file' && dot > 0 ? dot : initial.length);
+  }, [initial, kind]);
+  const problem = value.trim() && value.trim() !== initial ? nameProblem(value, siblings, initial || undefined) : null;
+  const settle = (submit: boolean) => {
+    if (settled.current) return;
+    settled.current = true;
+    if (submit && !problem && value.trim()) onSubmit(value);
+    else cancelInline();
+  };
+  const k = kindOf(value);
+  return (
+    <div className="tree-edit" style={{ paddingLeft: pad }}>
+      {kind === 'folder' ? <Icon name="chevronRight" size={12} /> : <span className={`kind ${k}`}>{KIND_LETTER[k]}</span>}
+      <input
+        ref={ref}
+        className={`tree-input mono ${problem ? 'invalid' : ''}`}
+        value={value}
+        spellCheck={false}
+        aria-label={initial ? `Rename ${initial}` : kind === 'folder' ? 'New folder name' : 'New file name'}
+        aria-invalid={!!problem}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (!problem) settle(true);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            settle(false);
+          }
+        }}
+        onBlur={() => settle(true)}
+      />
+      {problem && (
+        <div className="tree-input-error" role="alert">
+          {problem}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NestTree({ onMenu }: { onMenu: OpenMenu }) {
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
+  const selected = useExplorer((s) => s.selected);
+  const renaming = useExplorer((s) => s.renaming);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const issuesByModule = useMemo(() => {
     const map: Record<string, string> = {};
     for (const d of model.diagnostics) {
@@ -53,22 +185,57 @@ function NestTree() {
       .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path));
   const loose = model.files.filter((f) => !f.module);
   const activeModule = moduleForFile(model, active)?.name;
+  const siblingsOf = (path: string) => model.files.filter((f) => dirname(f.path) === dirname(path)).map((f) => basename(f.path));
+
+  const fileRow = (path: string, kind: string, label: string, pad?: number) =>
+    renaming === path ? (
+      <InlineName key={path} pad={pad ?? 8} kind="file" initial={basename(path)} siblings={siblingsOf(path)} onSubmit={(n) => void finishRename(path, n)} />
+    ) : (
+      <button
+        key={path}
+        className={`tree-row ${path === active ? 'active' : ''} ${selected?.path === path ? 'selected' : ''} ${kind === 'spec' ? 'dim' : ''}`}
+        style={pad ? { paddingLeft: pad } : undefined}
+        onClick={() => {
+          select(path, false);
+          openFile(path);
+        }}
+        onContextMenu={(e) => {
+          select(path, false);
+          onMenu(e, entryMenu(path, false));
+        }}
+        title={path}
+      >
+        <span className={`kind ${kind}`}>{KIND_LETTER[kind]}</span>
+        <span className="label">{label}</span>
+        {model.diagnostics.some((d) => d.file === path && d.severity !== 'info') && <span className="dot warn" style={{ marginLeft: 'auto' }} aria-label="Has issues" />}
+      </button>
+    );
 
   return (
-    <div className="tree">
+    <>
       {modules.map((m) => {
         const open = collapsed[m.name] === undefined ? m.name === activeModule : !collapsed[m.name];
         const issue = issuesByModule[m.name];
         const meta = issue ?? (model.rootModules.includes(m.name) ? 'root' : m.orm ?? (m.global ? 'global' : ''));
+        const dir = dirname(m.file);
         return (
           <div key={m.name}>
             <button
-              className="tree-row"
-              onClick={() => setCollapsed((c) => ({ ...c, [m.name]: open }))}
+              className={`tree-row ${selected?.path === dir && selected.dir ? 'selected' : ''}`}
+              onClick={() => {
+                select(dir, true);
+                setCollapsed((c) => ({ ...c, [m.name]: open }));
+              }}
               onDoubleClick={() => openFile(m.file, m.line)}
               onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ x: e.clientX, y: e.clientY, items: moduleMenu(m) });
+                select(dir, true);
+                onMenu(e, [
+                  ...moduleMenu(m),
+                  { separator: true, label: '' },
+                  { label: `New file in ${dir || 'the project root'}…`, run: () => startCreate('file', dir) },
+                  { label: 'New folder…', run: () => startCreate('folder', dir) },
+                  { label: 'Reveal in File Explorer', run: () => reveal(dir) },
+                ]);
               }}
               aria-expanded={open}
             >
@@ -81,14 +248,7 @@ function NestTree() {
                 </span>
               )}
             </button>
-            {open &&
-              filesOf(m.name).map((f) => (
-                <button key={f.path} className={`tree-row ${f.path === active ? 'active' : ''} ${f.kind === 'spec' ? 'dim' : ''}`} style={{ paddingLeft: 40 }} onClick={() => openFile(f.path)} title={f.path}>
-                  <span className={`kind ${f.kind}`}>{KIND_LETTER[f.kind]}</span>
-                  <span className="label">{basename(f.path)}</span>
-                  {model.diagnostics.some((d) => d.file === f.path && d.severity !== 'info') && <span className="dot warn" style={{ marginLeft: 'auto' }} aria-label="Has issues" />}
-                </button>
-              ))}
+            {open && filesOf(m.name).map((f) => fileRow(f.path, f.kind, basename(f.path), 40))}
           </div>
         );
       })}
@@ -97,42 +257,63 @@ function NestTree() {
           <div className="caps" style={{ padding: '12px 8px 4px', fontSize: 10.5 }}>
             Other files
           </div>
-          {loose.map((f) => (
-            <button key={f.path} className={`tree-row ${f.path === active ? 'active' : ''} ${f.kind === 'spec' ? 'dim' : ''}`} onClick={() => openFile(f.path)} title={f.path}>
-              <span className={`kind ${f.kind}`}>{KIND_LETTER[f.kind]}</span>
-              <span className="label">{f.path}</span>
-            </button>
-          ))}
+          {loose.map((f) => fileRow(f.path, f.kind, f.path))}
         </>
       )}
-      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
-    </div>
+    </>
   );
 }
 
-function FileTree({ dir = '', depth = 0 }: { dir?: string; depth?: number }) {
+function FileTree({ dir = '', depth = 0, onMenu }: { dir?: string; depth?: number; onMenu: OpenMenu }) {
   const [entries, setEntries] = useState<DirEntry[] | null>(null);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
   const active = useApp((s) => s.active);
   const model = useApp((s) => s.model);
+  const expanded = useExplorer((s) => s.expanded);
+  const selected = useExplorer((s) => s.selected);
+  const creating = useExplorer((s) => s.creating);
+  const renaming = useExplorer((s) => s.renaming);
+  const version = useExplorer((s) => s.version);
   useEffect(() => {
-    api.listDir(dir).then(setEntries, () => setEntries([]));
-  }, [dir, model]);
+    let live = true;
+    api.listDir(dir).then(
+      (e) => live && setEntries(e),
+      () => live && setEntries([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [dir, model, version]);
   if (!entries) return null;
+  const names = entries.map((e) => e.name);
+  const pad = 8 + depth * 14;
   return (
     <>
+      {creating?.dir === dir && <InlineName pad={pad} kind={creating.kind} initial="" siblings={names} onSubmit={(n) => void finishCreate(n)} />}
       {entries.map((e) => (
         <div key={e.path}>
-          <button
-            className={`tree-row ${e.path === active ? 'active' : ''} ${e.ignored ? 'dim' : ''}`}
-            style={{ paddingLeft: 8 + depth * 14 }}
-            onClick={() => (e.dir ? setOpen((o) => ({ ...o, [e.path]: !o[e.path] })) : openFile(e.path))}
-            title={e.path}
-          >
-            {e.dir ? <Icon name={open[e.path] ? 'chevronDown' : 'chevronRight'} size={12} /> : <span className={`kind ${kindOf(e.path)}`}>{KIND_LETTER[kindOf(e.path)]}</span>}
-            <span className="label">{e.name}</span>
-          </button>
-          {e.dir && open[e.path] && <FileTree dir={e.path} depth={depth + 1} />}
+          {renaming === e.path ? (
+            <InlineName pad={pad} kind={e.dir ? 'folder' : 'file'} initial={e.name} siblings={names} onSubmit={(n) => void finishRename(e.path, n)} />
+          ) : (
+            <button
+              className={`tree-row ${e.path === active ? 'active' : ''} ${selected?.path === e.path ? 'selected' : ''} ${e.ignored ? 'dim' : ''}`}
+              style={{ paddingLeft: pad }}
+              onClick={() => {
+                select(e.path, e.dir);
+                if (e.dir) toggleFolder(e.path);
+                else openFile(e.path);
+              }}
+              onContextMenu={(ev) => {
+                select(e.path, e.dir);
+                onMenu(ev, entryMenu(e.path, e.dir));
+              }}
+              title={e.path}
+              aria-expanded={e.dir ? !!expanded[e.path] : undefined}
+            >
+              {e.dir ? <Icon name={expanded[e.path] ? 'chevronDown' : 'chevronRight'} size={12} /> : <span className={`kind ${kindOf(e.path)}`}>{KIND_LETTER[kindOf(e.path)]}</span>}
+              <span className="label">{e.name}</span>
+            </button>
+          )}
+          {e.dir && expanded[e.path] && <FileTree dir={e.path} depth={depth + 1} onMenu={onMenu} />}
         </div>
       ))}
     </>
@@ -140,26 +321,74 @@ function FileTree({ dir = '', depth = 0 }: { dir?: string; depth?: number }) {
 }
 
 export function Explorer() {
+  const style = useSideStyle('left');
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
-  const [mode, setMode] = useState<'nest' | 'files'>('nest');
+  const mode = useExplorer((s) => s.mode);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const target = moduleForFile(model, active) ?? model.modules.find((m) => m.name === model.rootModules[0]);
+  const onMenu: OpenMenu = (e, items) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const sel = useExplorer.getState().selected;
+    if (!sel || (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (e.key === 'F2') {
+      e.preventDefault();
+      startRename(sel.path);
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      void deleteEntry(sel.path, sel.dir);
+    }
+  };
   return (
-    <aside className="side" aria-label="Project explorer">
+    <aside className="side" aria-label="Project explorer" style={style}>
       <div className="side-head">
-        <span className="caps" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span className="caps" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={model.root}>
           {model.name}
         </span>
-        <div className="segmented">
-          <button aria-pressed={mode === 'nest'} onClick={() => setMode('nest')}>
+        <div className="side-actions">
+          <button className="icon-btn" title="New file (Ctrl N)" aria-label="New file" onClick={() => startCreate('file')}>
+            <Icon name="fileAdd" size={16} />
+          </button>
+          <button className="icon-btn" title="New folder" aria-label="New folder" onClick={() => startCreate('folder')}>
+            <Icon name="folderAdd" size={16} />
+          </button>
+          <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={refreshTree}>
+            <Icon name="restart" size={15} />
+          </button>
+          <button className="icon-btn" title="Collapse folders" aria-label="Collapse folders" disabled={mode !== 'files'} onClick={collapseAll}>
+            <Icon name="collapseAll" size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="side-mode">
+        <div className="segmented" style={{ width: '100%' }}>
+          <button aria-pressed={mode === 'nest'} onClick={() => setExplorerMode('nest')}>
             Nest
           </button>
-          <button aria-pressed={mode === 'files'} onClick={() => setMode('files')}>
+          <button aria-pressed={mode === 'files'} onClick={() => setExplorerMode('files')}>
             Files
           </button>
         </div>
       </div>
-      <div className="scroll grow">{mode === 'nest' ? <NestTree /> : <div className="tree"><FileTree /></div>}</div>
+      <div
+        className="scroll grow tree"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        onContextMenu={(e) =>
+          onMenu(e, [
+            { label: 'New file…', kbd: 'Ctrl N', run: () => startCreate('file', '') },
+            { label: 'New folder…', run: () => startCreate('folder', '') },
+            { separator: true, label: '' },
+            { label: 'Reveal in File Explorer', run: () => reveal('') },
+          ])
+        }
+      >
+        {mode === 'nest' ? <NestTree onMenu={onMenu} /> : <FileTree onMenu={onMenu} />}
+      </div>
       <div className="side-foot">
         <button className="btn" onClick={() => openGenerator(target ? dirname(target.file) : null, target?.name ?? null)}>
           <Icon name="plus" size={15} />
@@ -169,6 +398,7 @@ export function Explorer() {
           Right-click any module for generators
         </div>
       </div>
+      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
     </aside>
   );
 }
@@ -191,6 +421,7 @@ function InjectRow({ name, status, via }: { name: string; status: string; via: s
 }
 
 export function Inspector() {
+  const style = useSideStyle('right');
   const model = useApp((s) => s.model)!;
   const active = useApp((s) => s.active);
   const cursor = useApp((s) => s.cursor);
@@ -198,7 +429,7 @@ export function Inspector() {
   const cls: ClassInfo | undefined = [...classes].reverse().find((c) => c.line <= cursor.line) ?? classes[0];
   if (!cls) {
     return (
-      <aside className="side right" aria-label="Inspector">
+      <aside className="side right" aria-label="Inspector" style={style}>
         <div className="section">
           <span className="caps">Inspector</span>
           <span className="muted">Open a Nest file to see its routes, injections and module wiring.</span>
@@ -211,7 +442,7 @@ export function Inspector() {
   const mod = model.modules.find((m) => m.name === (cls.kind === 'module' ? cls.name : cls.modules[0]));
   const kindTone = cls.kind === 'module' ? 'module' : cls.kind === 'controller' ? 'controller' : cls.kind === 'entity' || cls.kind === 'schema' ? 'entity' : cls.kind === 'dto' ? 'dto' : 'service';
   return (
-    <aside className="side right scroll" aria-label="Inspector">
+    <aside className="side right scroll" aria-label="Inspector" style={style}>
       <div className="section">
         <span className="caps">Inspector</span>
         <div className="row">
@@ -417,58 +648,6 @@ function TestsSummary() {
   );
 }
 
-function TerminalView() {
-  const [line, setLine] = useState('');
-  const [history, setHistory] = useState<string[]>([]);
-  const [hi, setHi] = useState(-1);
-  const running = useApp((s) => s.running.terminal);
-  return (
-    <div className="col grow">
-      <LogView id="tasks" />
-      <form
-        className="terminal-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!line.trim()) return;
-          useApp.getState().logs.tasks;
-          setHistory((h) => [line, ...h].slice(0, 50));
-          setHi(-1);
-          void guard(api.runCommand(line));
-          setLine('');
-        }}
-      >
-        <span className="mono faint">$</span>
-        <input
-          value={line}
-          onChange={(e) => setLine(e.target.value)}
-          placeholder={running ? 'A command is running — Enter runs another after stopping it' : 'Run a command in the project folder (npm, nest, git…)'}
-          aria-label="Command"
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp' && history.length) {
-              const n = Math.min(hi + 1, history.length - 1);
-              setHi(n);
-              setLine(history[n]);
-            }
-            if (e.key === 'ArrowDown') {
-              const n = Math.max(hi - 1, -1);
-              setHi(n);
-              setLine(n < 0 ? '' : history[n]);
-            }
-          }}
-        />
-        {running && (
-          <button type="button" className="btn sm" onClick={() => void api.stopProcess('terminal')}>
-            Stop
-          </button>
-        )}
-        <button type="button" className="btn sm ghost" onClick={() => clearLog('tasks')}>
-          Clear
-        </button>
-      </form>
-    </div>
-  );
-}
-
 export function BottomPanel() {
   const open = useApp((s) => s.panelOpen);
   const tab = useApp((s) => s.panelTab);
@@ -487,14 +666,21 @@ export function BottomPanel() {
   });
   if (!open) return null;
   const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
     const startY = e.clientY;
     const startH = height;
-    const move = (ev: MouseEvent) => setHeight(Math.max(110, Math.min(window.innerHeight - 220, startH + startY - ev.clientY)));
+    let h = startH;
+    document.body.classList.add('resizing-row');
+    const move = (ev: MouseEvent) => {
+      h = Math.max(110, Math.min(window.innerHeight - 220, startH + startY - ev.clientY));
+      setHeight(h);
+    };
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      document.body.classList.remove('resizing-row');
       try {
-        localStorage.setItem('nf.panelHeight', String(height));
+        localStorage.setItem('nf.panelHeight', String(h));
       } catch {
         /* storage unavailable */
       }
@@ -512,6 +698,7 @@ export function BottomPanel() {
     ],
     ['problems', <>Problems {problems > 0 && <span className="count">{problems}</span>}</>],
     ['tests', 'Tests'],
+    ['output', 'Output'],
     ['terminal', 'Terminal'],
   ];
   return (
@@ -532,11 +719,12 @@ export function BottomPanel() {
               Open Swagger
             </button>
           )}
-          {tab === 'run' && (
-            <button className="btn sm ghost" onClick={() => clearLog(debugging ? 'debug' : 'run')}>
+          {(tab === 'run' || tab === 'output') && (
+            <button className="btn sm ghost" onClick={() => clearLog(tab === 'output' ? 'tasks' : debugging ? 'debug' : 'run')}>
               Clear
             </button>
           )}
+          {tab === 'terminal' && <TerminalActions />}
           <button className="icon-btn" aria-label="Hide panel" onClick={() => useApp.setState({ panelOpen: false })}>
             <Icon name="chevronDown" size={14} />
           </button>
@@ -544,6 +732,7 @@ export function BottomPanel() {
         {tab === 'run' && <LogView id={debugging ? 'debug' : 'run'} />}
         {tab === 'problems' && <ProblemsView />}
         {tab === 'tests' && <TestsSummary />}
+        {tab === 'output' && <LogView id="tasks" />}
         {tab === 'terminal' && <TerminalView />}
       </section>
     </>
@@ -554,10 +743,12 @@ export function Workspace() {
   return (
     <>
       <Explorer />
+      <SideResizer side="left" />
       <main className="main">
         <EditorArea />
         <BottomPanel />
       </main>
+      <SideResizer side="right" />
       <Inspector />
     </>
   );
